@@ -24,38 +24,55 @@ def inicializar_camara() -> cv2.VideoCapture:
     """
     Inicializa y configura la cámara web.
 
+    Intenta diferentes índices de cámara si el configurado inicialmente falla.
+
     Returns:
         VideoCapture: Objeto de captura de video de OpenCV.
 
     Raises:
-        CameraError: Si no se puede abrir la cámara.
+        CameraError: Si no se puede abrir ninguna cámara.
     """
-    try:
-        # Intentar abrir la cámara con el índice especificado
-        cap = cv2.VideoCapture(CAMERA_INDEX)
+    # Lista de índices de cámara a intentar, empezando por el configurado
+    indices_camara = [CAMERA_INDEX, 0, 1, 2]
+    # Eliminar duplicados manteniendo el orden
+    indices_camara = list(dict.fromkeys(indices_camara))
 
-        # Verificar si la cámara se abrió correctamente
-        if not cap.isOpened():
-            logger.error(f"No se pudo abrir la cámara con índice {CAMERA_INDEX}")
-            raise CameraError(f"No se pudo abrir la cámara con índice {CAMERA_INDEX}")
+    for indice in indices_camara:
+        try:
+            logger.info(f"Intentando abrir la cámara con índice {indice}...")
+            # Intentar abrir la cámara con el índice actual
+            cap = cv2.VideoCapture(indice)
 
-        # Configurar la resolución de la cámara
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+            # Verificar si la cámara se abrió correctamente
+            if cap.isOpened():
+                # Configurar la resolución de la cámara
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
-        # Registrar que la cámara se ha inicializado correctamente
-        actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-        actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        logger.info(f"Cámara inicializada con resolución: {actual_width}x{actual_height}")
+                # Leer un fotograma de prueba para asegurarse de que funciona
+                ret, _ = cap.read()
+                if not ret:
+                    logger.warning(f"Se pudo abrir la cámara {indice} pero no se pudo leer un fotograma")
+                    cap.release()
+                    continue
 
-        return cap
+                # Registrar que la cámara se ha inicializado correctamente
+                actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                logger.info(f"Cámara inicializada con resolución: {actual_width}x{actual_height}")
 
-    except cv2.error as e:
-        logger.error(f"Error de OpenCV al abrir la cámara: {e}")
-        raise CameraError(f"Error de OpenCV al abrir la cámara: {e}")
-    except Exception as e:
-        logger.error(f"Error inesperado al abrir la cámara: {e}")
-        raise CameraError(f"Error inesperado al abrir la cámara: {e}")
+                return cap
+            else:
+                logger.warning(f"No se pudo abrir la cámara con índice {indice}")
+
+        except cv2.error as e:
+            logger.warning(f"Error de OpenCV al abrir la cámara {indice}: {e}")
+        except Exception as e:
+            logger.warning(f"Error inesperado al abrir la cámara {indice}: {e}")
+
+    # Si llegamos aquí, no se pudo abrir ninguna cámara
+    logger.error("No se pudo abrir ninguna cámara disponible")
+    raise CameraError("No se pudo abrir ninguna cámara disponible. Verifica que tu cámara esté conectada y no esté siendo utilizada por otra aplicación.")
 
 def leer_fotograma(cap: cv2.VideoCapture) -> Tuple[bool, Optional[np.ndarray]]:
     """

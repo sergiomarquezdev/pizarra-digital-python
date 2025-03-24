@@ -7,13 +7,13 @@ utilizados en toda la aplicación.
 from typing import Dict, Tuple, List
 
 # Configuración de la cámara
-CAMERA_INDEX: int = 0  # Índice de la cámara a utilizar (0 para la cámara integrada)
+CAMERA_INDEX: int = 0  # Cambiado de 0 a 1 para probar con cámara externa o secundaria
 CAMERA_WIDTH: int = 640  # Ancho de la captura de la cámara
 CAMERA_HEIGHT: int = 480  # Alto de la captura de la cámara
 
 # Configuración de MediaPipe Hands
 MAX_NUM_HANDS: int = 1  # Número máximo de manos a detectar
-MIN_DETECTION_CONFIDENCE: float = 0.7  # Umbral mínimo de confianza para la detección
+MIN_DETECTION_CONFIDENCE: float = 0.5  # Reducido de 0.7 a 0.5 para mayor tolerancia
 MIN_TRACKING_CONFIDENCE: float = 0.5  # Umbral mínimo de confianza para el seguimiento
 
 # Configuración del lienzo

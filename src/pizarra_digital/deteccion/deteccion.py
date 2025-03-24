@@ -24,7 +24,8 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 # Tipo personalizado para los puntos de referencia de la mano
-HandLandmarks = List[mp.framework.formats.landmark_pb2.NormalizedLandmark]
+# Cambiado para evitar la referencia a la estructura interna de MediaPipe
+HandLandmarks = Any  # Lista de landmarks de mano
 
 class DetectorManos:
     """Clase para la detección y seguimiento de manos usando MediaPipe Hands."""
