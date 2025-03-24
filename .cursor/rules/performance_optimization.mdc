@@ -1,0 +1,18 @@
+---
+description: Performance Optimization for Real-time Processing
+globs: **/*.py
+---
+
+# Performance Optimization
+
+- Minimize NumPy array copies, use views when possible
+- Use NumPy vectorized operations instead of explicit loops
+- Leverage OpenCV optimized functions
+- Consider frame resolution reduction for performance if precision isn't critical
+- Pre-allocate NumPy arrays when size is known
+- Use threading or multiprocessing with care for background tasks
+- Monitor resource usage during development to identify bottlenecks
+- Release OpenCV resources properly to avoid memory leaks
+- Use context managers (`with` statements) for resource management
+- Optimize the main processing loop for efficiency
+- Avoid LRU caching in the main video processing loop

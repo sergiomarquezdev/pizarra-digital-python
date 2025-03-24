@@ -1,0 +1,32 @@
+# Bytecode compilado
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribuciones
+dist/
+build/
+*.egg-info/
+
+# Entornos virtuales
+venv/
+env/
+ENV/
+
+# Archivos de caché
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Archivos de IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db

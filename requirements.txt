@@ -1,0 +1,8 @@
+# Dependencias principales
+opencv-python>=4.5.0
+mediapipe>=0.8.10
+numpy>=1.20.0
+
+# Herramientas de desarrollo
+ruff>=0.0.257
+pytest>=7.0.0

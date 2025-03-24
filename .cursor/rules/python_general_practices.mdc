@@ -1,0 +1,16 @@
+---
+description: Python General Coding Standards
+globs: **/*.py
+---
+
+# General Python Practices
+
+- Use Python 3.10+ features and syntax
+- Follow PEP 8 guidelines with Ruff as the preferred linter/formatter
+- Apply strict type hinting with the `typing` module for all functions and methods
+- Write clear, concise, and readable code with explicit intent
+- Follow the Zen of Python principles in code design
+- Use proper exception handling with specific exception types
+- Implement logging for important events, warnings, and errors
+- Use docstrings in Google style for all functions, methods, and classes
+- Prioritize simplicity and maintainability over complex solutions

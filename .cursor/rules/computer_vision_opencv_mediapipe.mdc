@@ -1,0 +1,17 @@
+---
+description: OpenCV and MediaPipe Implementation Guidelines
+globs: **/vision/**/*.py
+---
+
+# Computer Vision with OpenCV and MediaPipe
+
+- Use OpenCV (`cv2`) for image/video processing and camera interactions
+- Implement MediaPipe Hands for hand detection and landmark tracking
+- Convert between BGR (OpenCV) and RGB (MediaPipe) color formats properly
+- Document image formats (BGR/RGB) and coordinate systems clearly
+- Handle camera resources properly to avoid memory leaks
+- Implement frame preprocessing to optimize detection performance
+- Add clear visualization for hand landmarks and connections
+- Document MediaPipe version in use
+- Implement proper error handling for camera failures and detection issues
+- Optimize frame processing for real-time performance

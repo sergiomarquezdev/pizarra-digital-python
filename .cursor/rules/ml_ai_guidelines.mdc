@@ -1,0 +1,17 @@
+---
+description: ML/AI Implementation Guidelines
+globs: **/ml/**/*.py
+---
+
+# Machine Learning and AI Guidelines
+
+- Keep configuration simple using direct code settings or simple config files
+- Maintain simple data pipelines for real-time processing
+- Document MediaPipe model versions in use
+- Implement comprehensive logging for experiment tracking
+- Use appropriate data structures for tracking hand states over time (e.g., `deque`)
+- Implement clean interfaces for landmark data processing
+- Add proper documentation for coordinate systems and data formats
+- Track and log relevant metrics (e.g., FPS, detection counts)
+- Consider techniques for smoothing landmark positions over time
+- Implement gesture recognition based on landmark sequences if needed

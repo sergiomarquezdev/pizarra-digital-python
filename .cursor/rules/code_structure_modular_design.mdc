@@ -1,0 +1,16 @@
+---
+description: Code Structure and Modular Design
+globs: **/*.py
+---
+
+# Code Structure and Organization
+
+- Follow the Single Responsibility Principle for modules and functions
+- Create reusable components and utility functions
+- Organize code in logical packages and modules (e.g., `capture`, `detection`, `visualization`, `utils`)
+- Favor composition over inheritance when appropriate
+- Create clear interfaces between components
+- Use descriptive naming for functions, variables, and modules
+- Avoid over-modularization while maintaining clean separation of concerns
+- Implement proper file and directory structure for the project
+- Design components to be testable and maintainable

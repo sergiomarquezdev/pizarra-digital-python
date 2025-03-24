@@ -1,0 +1,17 @@
+---
+description: Testing and Code Quality Standards
+globs: **/tests/**/*.py
+---
+
+# Testing and Quality Assurance
+
+- Use `pytest` for all test implementation
+- Aim for 90%+ test coverage
+- Test common cases, edge cases, and error conditions
+- Use fixtures and parametrization for efficient testing
+- Include testing for camera unavailability and empty frames
+- Test hand detection with various poses and conditions
+- Implement proper assertions and error messages
+- Create test utilities for common testing operations
+- Document test cases with clear docstrings
+- Use test doubles (mocks/stubs) for external dependencies like cameras
