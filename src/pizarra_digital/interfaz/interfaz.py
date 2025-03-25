@@ -210,7 +210,19 @@ class InterfazUsuario:
 
         # Variables para interacción táctil
         self.ultima_pos_dedo: Optional[Tuple[int, int]] = None
+        self.indice_extendido: bool = False
         self.ultimo_tiempo_interaccion = 0.0
+
+        # Buffer para la interfaz - evita crear nuevos arrays en cada frame
+        self._buffer_ui = None
+
+        # Diccionario para rendimiento de interacción
+        self._metricas = {
+            'tiempo_ultimo_frame': time.time(),
+            'tiempo_procesamiento': 0.0,
+            'frames_procesados': 0,
+            'botones_activados': 0
+        }
 
         logger.info(f"Interfaz de usuario inicializada con dimensiones {ancho_ventana}x{alto_ventana}")
 
@@ -292,9 +304,11 @@ class InterfazUsuario:
 
         self.agregar_boton(boton_limpiar)
 
-    def dibujar(self, frame: np.ndarray) -> np.ndarray:
+    def dibujar_interfaz(self, frame: np.ndarray) -> np.ndarray:
         """
-        Dibuja la interfaz de usuario en un fotograma.
+        Dibuja la interfaz de usuario en un fotograma sin procesar interacción.
+
+        Esta versión optimizada evita crear un nuevo array en cada frame.
 
         Args:
             frame: Fotograma donde dibujar la interfaz.
@@ -302,22 +316,111 @@ class InterfazUsuario:
         Returns:
             Fotograma con la interfaz dibujada.
         """
+        # Crear o redimensionar el buffer si es necesario
+        if self._buffer_ui is None or self._buffer_ui.shape != frame.shape:
+            self._buffer_ui = np.zeros_like(frame)
+
         # Copiar el fotograma para no modificar el original
-        frame_ui = frame.copy()
+        np.copyto(self._buffer_ui, frame)
 
         # Dibujar todos los botones
         for boton in self.botones:
-            boton.dibujar(frame_ui)
+            boton.dibujar(self._buffer_ui)
 
         # Dibujar indicador de posición del dedo si está presente
         if self.ultima_pos_dedo:
             x, y = self.ultima_pos_dedo
-            cv2.circle(frame_ui, (x, y), RADIO_INDICADOR_DEDO, (0, 255, 255), 2)
+            cv2.circle(self._buffer_ui, (x, y), RADIO_INDICADOR_DEDO, (0, 255, 255), 2)
 
             # Agregar un pequeño punto en el centro para mejor precisión
-            cv2.circle(frame_ui, (x, y), 2, (0, 255, 255), -1)
+            cv2.circle(self._buffer_ui, (x, y), 2, (0, 255, 255), -1)
 
-        return frame_ui
+        return self._buffer_ui
+
+    def procesar_interaccion(self,
+                           frame: np.ndarray,
+                           posicion_dedo: Optional[Tuple[int, int]],
+                           indice_extendido: bool) -> np.ndarray:
+        """
+        Procesa la interacción táctil y dibuja la interfaz en un fotograma.
+
+        Este método combina la actualización del estado de interacción y el dibujo
+        de la interfaz en una sola llamada para mayor eficiencia.
+
+        Args:
+            frame: Fotograma donde dibujar la interfaz.
+            posicion_dedo: Coordenadas (x, y) de la punta del dedo índice, o None si no hay dedo.
+            indice_extendido: Indica si el dedo índice está extendido.
+
+        Returns:
+            Fotograma con la interfaz dibujada y la interacción procesada.
+        """
+        # Actualizar estado de interacción
+        self.ultima_pos_dedo = posicion_dedo
+        self.indice_extendido = indice_extendido
+
+        # Medir tiempo de procesamiento
+        inicio_procesamiento = time.time()
+
+        # Procesar interacción si hay un dedo y no está extendido (modo interacción, no dibujo)
+        if posicion_dedo is not None and not indice_extendido:
+            # Verificar si el dedo está sobre algún botón
+            boton_activado = None
+            for boton in self.botones:
+                if boton.actualizar_estado_hover(posicion_dedo):
+                    boton_activado = boton
+                    break
+
+            # Si se ha activado un botón, desactivar el botón anterior y ejecutar la acción
+            if boton_activado:
+                # Desactivar el botón previamente seleccionado
+                if self.boton_seleccionado and self.boton_seleccionado != boton_activado:
+                    self.boton_seleccionado.desactivar()
+
+                # Activar el nuevo botón y ejecutar su acción
+                boton_activado.activar()
+                boton_activado.ejecutar_accion()
+
+                # Actualizar el botón seleccionado
+                self.boton_seleccionado = boton_activado
+                self._metricas['botones_activados'] += 1
+
+                logger.info(f"Botón '{boton_activado.etiqueta}' seleccionado mediante gesto táctil")
+        elif posicion_dedo is None or indice_extendido:
+            # Si no hay posición del dedo o está dibujando, reiniciar el estado de los botones
+            for boton in self.botones:
+                boton.en_hover = False
+                boton.tiempo_inicio_hover = None
+                boton.progreso_activacion = 0.0
+
+        # Dibujar la interfaz
+        resultado = self.dibujar_interfaz(frame)
+
+        # Actualizar métricas de rendimiento
+        ahora = time.time()
+        self._metricas['tiempo_procesamiento'] = ahora - inicio_procesamiento
+        self._metricas['frames_procesados'] += 1
+        fps_ui = 1.0 / max(0.001, ahora - self._metricas['tiempo_ultimo_frame'])
+        self._metricas['tiempo_ultimo_frame'] = ahora
+
+        # Opcionalmente, mostrar métricas de rendimiento en la UI
+        # cv2.putText(resultado, f"UI FPS: {fps_ui:.1f}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+
+        return resultado
+
+    def dibujar(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Método original para dibujar la interfaz (mantenido por compatibilidad).
+
+        Utilizar dibujar_interfaz() o procesar_interaccion() para mejor rendimiento.
+
+        Args:
+            frame: Fotograma donde dibujar la interfaz.
+
+        Returns:
+            Fotograma con la interfaz dibujada.
+        """
+        return self.dibujar_interfaz(frame)
 
     def procesar_evento_mouse(self, evento: int, x: int, y: int, *args) -> None:
         """
@@ -354,11 +457,15 @@ class InterfazUsuario:
         """
         Procesa la posición del dedo índice para interacción táctil.
 
+        Método original mantenido por compatibilidad. Usar procesar_interaccion()
+        para mayor eficiencia.
+
         Args:
             posicion: Coordenadas (x, y) de la punta del dedo índice, o None si no hay dedo.
             dibujando: Indica si el dedo está en modo dibujo (extendido).
         """
         self.ultima_pos_dedo = posicion
+        self.indice_extendido = dibujando
 
         # Si no hay posición del dedo o está dibujando, reiniciar todos los botones
         if posicion is None or dibujando:
