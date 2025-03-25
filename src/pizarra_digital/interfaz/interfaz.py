@@ -11,13 +11,12 @@ import time
 from typing import Tuple, List, Dict, Callable, Optional, Any
 
 from ..config import (
-    BUTTON_WIDTH,
-    BUTTON_HEIGHT,
-    BUTTON_MARGIN,
-    BUTTON_COLOR,
-    BUTTON_TEXT_COLOR,
-    BUTTON_FONT_SCALE,
-    COLOR_PALETTE
+    UI_BUTTON_SIZE,
+    UI_BUTTON_SPACING,
+    UI_BUTTON_RADIUS,
+    UI_PANEL_HEIGHT,
+    COLORS,
+    DEFAULT_COLOR
 )
 
 # Configuración del logging
@@ -26,8 +25,14 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 # Constantes para la interacción táctil
-TIEMPO_ACTIVACION_BOTON: float = 0.6  # Tiempo en segundos para activar un botón con el dedo
-RADIO_INDICADOR_DEDO: int = 10  # Radio del círculo que muestra dónde está el dedo índice
+TIEMPO_ACTIVACION_BOTON: float = 0.2  # Reducido: Tiempo en segundos para activar un botón con el dedo
+RADIO_INDICADOR_DEDO: int = 5  # Reducido de 10 a 5: Radio del círculo que muestra dónde está el dedo índice
+BUTTON_FONT_SCALE: float = 0.35  # Reducido de 0.5 a 0.35: Escala del texto en los botones
+BUTTON_COLOR: Tuple[int, int, int] = (100, 100, 100)  # Color de fondo de botones
+BUTTON_TEXT_COLOR: Tuple[int, int, int] = (255, 255, 255)  # Color de texto de botones
+BUTTON_WIDTH: int = UI_BUTTON_SIZE  # Ancho de botones
+BUTTON_HEIGHT: int = UI_BUTTON_SIZE  # Alto de botones
+BUTTON_MARGIN: int = UI_BUTTON_SPACING  # Margen entre botones
 
 class Boton:
     """Clase para representar un botón en la interfaz."""
@@ -91,8 +96,15 @@ class Boton:
             frame: Fotograma donde dibujar el botón.
         """
         # Dibujar el rectángulo del botón
-        color_borde = (255, 255, 255) if self.activo else (0, 0, 0)
-        grosor_borde = 2 if self.activo else 1
+        color_borde = (255, 255, 255) if self.activo else (50, 50, 50)
+        grosor_borde = 2 if self.activo else 1  # Reducido de 3/2 a 2/1
+
+        # Primero dibujar un borde exterior para mayor visibilidad (esp. para botones de color)
+        cv2.rectangle(frame,
+                     (self.x - 1, self.y - 1),
+                     (self.x + self.ancho + 1, self.y + self.alto + 1),
+                     (0, 0, 0),
+                     1)  # Reducido de 2 a 1: Borde negro exterior
 
         cv2.rectangle(frame,
                      (self.x, self.y),
@@ -109,7 +121,7 @@ class Boton:
         # Si el botón está en hover con el dedo, mostrar indicador de progreso
         if self.en_hover and self.progreso_activacion > 0:
             # Calcular las dimensiones de la barra de progreso
-            altura_barra = 4
+            altura_barra = 2  # Reducido de 4 a 2
             ancho_progreso = int(self.ancho * self.progreso_activacion)
 
             # Dibujar la barra de progreso en la parte inferior del botón
@@ -119,21 +131,22 @@ class Boton:
                          (0, 255, 255),  # Color amarillo
                          -1)  # Rellenar
 
-        # Dibujar el texto del botón
-        # Calcular la posición del texto para centrarlo en el botón
-        (ancho_texto, alto_texto), _ = cv2.getTextSize(
-            self.etiqueta, cv2.FONT_HERSHEY_SIMPLEX, BUTTON_FONT_SCALE, 1)
+        # Dibujar el texto del botón si tiene
+        if self.etiqueta:
+            # Calcular la posición del texto para centrarlo en el botón
+            (ancho_texto, alto_texto), _ = cv2.getTextSize(
+                self.etiqueta, cv2.FONT_HERSHEY_SIMPLEX, BUTTON_FONT_SCALE, 1)
 
-        pos_texto_x = self.x + (self.ancho - ancho_texto) // 2
-        pos_texto_y = self.y + (self.alto + alto_texto) // 2
+            pos_texto_x = self.x + (self.ancho - ancho_texto) // 2
+            pos_texto_y = self.y + (self.alto + alto_texto) // 2
 
-        cv2.putText(frame,
-                   self.etiqueta,
-                   (pos_texto_x, pos_texto_y),
-                   cv2.FONT_HERSHEY_SIMPLEX,
-                   BUTTON_FONT_SCALE,
-                   self.color_texto,
-                   1)
+            cv2.putText(frame,
+                       self.etiqueta,
+                       (pos_texto_x, pos_texto_y),
+                       cv2.FONT_HERSHEY_SIMPLEX,
+                       BUTTON_FONT_SCALE,
+                       self.color_texto,
+                       1)  # Grosor fijo de 1 para el texto
 
     def actualizar_estado_hover(self, punto: Optional[Tuple[int, int]]) -> bool:
         """
@@ -188,16 +201,16 @@ class Boton:
 class InterfazUsuario:
     """Clase para gestionar la interfaz de usuario de la pizarra digital."""
 
-    def __init__(self, ancho_ventana: int, alto_ventana: int) -> None:
+    def __init__(self, lienzo) -> None:
         """
         Inicializa la interfaz de usuario.
 
         Args:
-            ancho_ventana: Ancho de la ventana de la aplicación.
-            alto_ventana: Alto de la ventana de la aplicación.
+            lienzo: Instancia del lienzo de dibujo.
         """
-        self.ancho_ventana = ancho_ventana
-        self.alto_ventana = alto_ventana
+        self.lienzo = lienzo
+        self.ancho_ventana = lienzo.ancho
+        self.alto_ventana = lienzo.alto
 
         # Lista de botones
         self.botones: List[Boton] = []
@@ -224,7 +237,20 @@ class InterfazUsuario:
             'botones_activados': 0
         }
 
-        logger.info(f"Interfaz de usuario inicializada con dimensiones {ancho_ventana}x{alto_ventana}")
+        # Inicializar los botones
+        self._crear_botones()
+
+        logger.info(f"Interfaz de usuario inicializada con dimensiones {self.ancho_ventana}x{self.alto_ventana}")
+
+    def _crear_botones(self) -> None:
+        """
+        Crea todos los botones de la interfaz.
+        """
+        # Crear botones de colores
+        self.crear_botones_colores(self.lienzo.cambiar_color)
+
+        # Crear botón de limpieza
+        self.crear_boton_limpiar(self.lienzo.limpiar)
 
     def agregar_boton(self, boton: Boton) -> None:
         """
@@ -237,7 +263,7 @@ class InterfazUsuario:
 
     def crear_botones_colores(self, accion_cambiar_color: Callable[[Tuple[int, int, int]], None]) -> None:
         """
-        Crea botones para la selección de colores.
+        Crea botones para la selección de colores en una sola fila.
 
         Args:
             accion_cambiar_color: Función a ejecutar cuando se selecciona un color.
@@ -245,8 +271,25 @@ class InterfazUsuario:
         x_inicial = BUTTON_MARGIN
         y_inicial = BUTTON_MARGIN
 
-        # Crear botones para cada color en la paleta
-        for nombre_color, color_bgr in COLOR_PALETTE.items():
+        # Calcular el ancho total disponible
+        ancho_disponible = self.ancho_ventana - (2 * BUTTON_MARGIN)
+
+        # Determinar cuántos colores tenemos
+        num_colores = len(COLORS)
+
+        # Calcular el ancho de cada botón de color para que quepan todos en una fila
+        # dejando un poco de espacio para el botón de limpiar
+        ancho_boton_color = min(
+            BUTTON_WIDTH,  # No exceder el ancho máximo
+            max(30, (ancho_disponible - BUTTON_WIDTH - BUTTON_MARGIN) // num_colores - BUTTON_MARGIN)  # Asegurar un mínimo de 30px
+        )
+
+        # Ajustar altura si es necesario mantener proporciones
+        alto_boton_color = min(BUTTON_HEIGHT, ancho_boton_color)
+        alto_boton_color = max(30, alto_boton_color)  # Asegurar un mínimo de 30px de altura
+
+        # Crear botones para cada color en la paleta en una sola fila
+        for nombre_color, color_bgr in COLORS.items():
             # Crear una función de cierre para capturar el valor actual de color_bgr
             def crear_accion_color(color: Tuple[int, int, int]) -> Callable[[], None]:
                 return lambda: accion_cambiar_color(color)
@@ -254,9 +297,9 @@ class InterfazUsuario:
             boton = Boton(
                 x=x_inicial,
                 y=y_inicial,
-                ancho=BUTTON_WIDTH,
-                alto=BUTTON_HEIGHT,
-                etiqueta=nombre_color,
+                ancho=ancho_boton_color,
+                alto=alto_boton_color,
+                etiqueta="",  # Eliminar etiqueta para botones más pequeños
                 color=color_bgr,  # Usar el color como fondo del botón
                 color_texto=(0, 0, 0) if sum(color_bgr) > 380 else (255, 255, 255),  # Texto oscuro en fondos claros
                 accion=crear_accion_color(color_bgr)
@@ -264,13 +307,8 @@ class InterfazUsuario:
 
             self.agregar_boton(boton)
 
-            # Mover a la siguiente posición
-            x_inicial += BUTTON_WIDTH + BUTTON_MARGIN
-
-            # Si se llega al borde, saltar a la siguiente fila
-            if x_inicial + BUTTON_WIDTH > self.ancho_ventana // 2:
-                x_inicial = BUTTON_MARGIN
-                y_inicial += BUTTON_HEIGHT + BUTTON_MARGIN
+            # Mover a la siguiente posición horizontalmente
+            x_inicial += ancho_boton_color + BUTTON_MARGIN
 
     def crear_boton_limpiar(self,
                           accion_limpiar: Callable[[], None],
@@ -303,6 +341,22 @@ class InterfazUsuario:
         )
 
         self.agregar_boton(boton_limpiar)
+
+    def superponer_lienzo(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Superpone el lienzo en el frame y dibuja la interfaz.
+
+        Args:
+            frame: Frame donde dibujar la interfaz.
+
+        Returns:
+            Frame con el lienzo superpuesto y la interfaz dibujada.
+        """
+        # Superponer el lienzo
+        frame_con_lienzo = self.lienzo.superponer_en_fotograma(frame)
+
+        # Dibujar la interfaz
+        return self.dibujar_interfaz(frame_con_lienzo)
 
     def dibujar_interfaz(self, frame: np.ndarray) -> np.ndarray:
         """
@@ -337,48 +391,80 @@ class InterfazUsuario:
 
         return self._buffer_ui
 
-    def procesar_interaccion(self,
-                           frame: np.ndarray,
-                           posicion_dedo: Optional[Tuple[int, int]],
-                           indice_extendido: bool) -> np.ndarray:
+    def procesar_eventos(self) -> None:
         """
-        Procesa la interacción táctil y dibuja la interfaz en un fotograma.
+        Procesa los eventos de la interfaz.
 
-        Este método combina la actualización del estado de interacción y el dibujo
-        de la interfaz en una sola llamada para mayor eficiencia.
+        Este método debe ser llamado periódicamente para actualizar
+        el estado de la interfaz.
+        """
+        # Por ahora no hay eventos para procesar automáticamente
+        pass
+
+    def procesar_interaccion(self,
+                           posicion_dedo: Optional[Tuple[int, int]],
+                           indice_extendido: bool) -> None:
+        """
+        Procesa la interacción táctil para actualizar el estado de la interfaz.
 
         Args:
-            frame: Fotograma donde dibujar la interfaz.
             posicion_dedo: Coordenadas (x, y) de la punta del dedo índice, o None si no hay dedo.
             indice_extendido: Indica si el dedo índice está extendido.
-
-        Returns:
-            Fotograma con la interfaz dibujada y la interacción procesada.
         """
         # Actualizar estado de interacción
         self.ultima_pos_dedo = posicion_dedo
         self.indice_extendido = indice_extendido
 
+        # DEBUG: Log de inicio de procesamiento de interacción
+        logger.debug(f"DEBUG-UI: Procesando interacción - pos={posicion_dedo}, extendido={indice_extendido}")
+
         # Medir tiempo de procesamiento
         inicio_procesamiento = time.time()
 
-        # Procesar interacción si hay un dedo y no está extendido (modo interacción, no dibujo)
-        if posicion_dedo is not None and not indice_extendido:
+        # CAMBIO: Simplificado - Procesar interacción si hay una mano detectada
+        # No dependemos tanto del estado extendido para mayor fiabilidad
+        if posicion_dedo is not None:
+            # DEBUG: Log de interacción activa
+            logger.debug(f"DEBUG-UI: Interacción activa en posición {posicion_dedo}")
+
             # Verificar si el dedo está sobre algún botón
             boton_activado = None
-            for boton in self.botones:
-                if boton.actualizar_estado_hover(posicion_dedo):
+            for i, boton in enumerate(self.botones):
+                # DEBUG: Log de verificación de botón
+                contiene = boton.contiene_punto(posicion_dedo)
+                logger.debug(f"DEBUG-UI: Botón {i} en ({boton.x},{boton.y},{boton.ancho},{boton.alto}) - ¿Contiene punto? {contiene}")
+
+                # DEBUG: Estado de hover del botón antes de actualizar
+                hover_previo = boton.en_hover
+                tiempo_hover_previo = boton.tiempo_inicio_hover
+                progreso_previo = boton.progreso_activacion
+
+                # Actualizar estado de hover y verificar si se activó
+                activado = boton.actualizar_estado_hover(posicion_dedo)
+
+                # DEBUG: Log después de actualizar hover
+                logger.debug(f"DEBUG-UI: Botón {i} - Hover: {hover_previo}->{boton.en_hover}, " +
+                             f"Tiempo: {tiempo_hover_previo}->{boton.tiempo_inicio_hover}, " +
+                             f"Progreso: {progreso_previo:.2f}->{boton.progreso_activacion:.2f}, " +
+                             f"Activado: {activado}")
+
+                if activado:
                     boton_activado = boton
                     break
 
             # Si se ha activado un botón, desactivar el botón anterior y ejecutar la acción
             if boton_activado:
+                # DEBUG: Log de activación de botón
+                logger.debug(f"DEBUG-UI: ¡BOTÓN ACTIVADO! - {boton_activado.etiqueta}")
+
                 # Desactivar el botón previamente seleccionado
                 if self.boton_seleccionado and self.boton_seleccionado != boton_activado:
                     self.boton_seleccionado.desactivar()
+                    logger.debug(f"DEBUG-UI: Botón previo desactivado - {self.boton_seleccionado.etiqueta}")
 
                 # Activar el nuevo botón y ejecutar su acción
                 boton_activado.activar()
+                logger.debug(f"DEBUG-UI: Ejecutando acción del botón")
                 boton_activado.ejecutar_accion()
 
                 # Actualizar el botón seleccionado
@@ -386,41 +472,53 @@ class InterfazUsuario:
                 self._metricas['botones_activados'] += 1
 
                 logger.info(f"Botón '{boton_activado.etiqueta}' seleccionado mediante gesto táctil")
-        elif posicion_dedo is None or indice_extendido:
-            # Si no hay posición del dedo o está dibujando, reiniciar el estado de los botones
-            for boton in self.botones:
+        else:
+            # Si no hay posición del dedo, reiniciar el estado de los botones
+            logger.debug(f"DEBUG-UI: Reiniciando estado de hover de todos los botones")
+            for i, boton in enumerate(self.botones):
+                hover_previo = boton.en_hover
+                tiempo_previo = boton.tiempo_inicio_hover
+                progreso_previo = boton.progreso_activacion
+
                 boton.en_hover = False
                 boton.tiempo_inicio_hover = None
                 boton.progreso_activacion = 0.0
 
-        # Dibujar la interfaz
-        resultado = self.dibujar_interfaz(frame)
+                if hover_previo:
+                    logger.debug(f"DEBUG-UI: Botón {i} reiniciado - Hover: {hover_previo}->False, " +
+                                f"Tiempo: {tiempo_previo}->None, Progreso: {progreso_previo:.2f}->0.0")
 
         # Actualizar métricas de rendimiento
         ahora = time.time()
         self._metricas['tiempo_procesamiento'] = ahora - inicio_procesamiento
         self._metricas['frames_procesados'] += 1
-        fps_ui = 1.0 / max(0.001, ahora - self._metricas['tiempo_ultimo_frame'])
         self._metricas['tiempo_ultimo_frame'] = ahora
 
-        # Opcionalmente, mostrar métricas de rendimiento en la UI
-        # cv2.putText(resultado, f"UI FPS: {fps_ui:.1f}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-
-        return resultado
-
-    def dibujar(self, frame: np.ndarray) -> np.ndarray:
+    def obtener_metricas(self) -> Dict[str, Any]:
         """
-        Método original para dibujar la interfaz (mantenido por compatibilidad).
-
-        Utilizar dibujar_interfaz() o procesar_interaccion() para mejor rendimiento.
-
-        Args:
-            frame: Fotograma donde dibujar la interfaz.
+        Obtiene métricas de rendimiento de la interfaz.
 
         Returns:
-            Fotograma con la interfaz dibujada.
+            Diccionario con métricas de rendimiento.
         """
-        return self.dibujar_interfaz(frame)
+        return {
+            "tiempo_procesamiento_ms": self._metricas['tiempo_procesamiento'] * 1000,
+            "frames_procesados": self._metricas['frames_procesados'],
+            "botones_activados": self._metricas['botones_activados']
+        }
+
+    def registrar_eventos_mouse(self, nombre_ventana: str) -> None:
+        """
+        Registra la función de callback para eventos de mouse.
+
+        Args:
+            nombre_ventana: Nombre de la ventana de OpenCV.
+        """
+        # Crear una función de cierre para capturar self
+        def callback_mouse(evento: int, x: int, y: int, flags: int, param: Any) -> None:
+            self.procesar_evento_mouse(evento, x, y, flags, param)
+
+        cv2.setMouseCallback(nombre_ventana, callback_mouse)
 
     def procesar_evento_mouse(self, evento: int, x: int, y: int, *args) -> None:
         """
@@ -452,61 +550,3 @@ class InterfazUsuario:
 
                     logger.info(f"Botón '{boton.etiqueta}' seleccionado")
                     return  # Salir después de encontrar un botón
-
-    def procesar_posicion_dedo(self, posicion: Optional[Tuple[int, int]], dibujando: bool) -> None:
-        """
-        Procesa la posición del dedo índice para interacción táctil.
-
-        Método original mantenido por compatibilidad. Usar procesar_interaccion()
-        para mayor eficiencia.
-
-        Args:
-            posicion: Coordenadas (x, y) de la punta del dedo índice, o None si no hay dedo.
-            dibujando: Indica si el dedo está en modo dibujo (extendido).
-        """
-        self.ultima_pos_dedo = posicion
-        self.indice_extendido = dibujando
-
-        # Si no hay posición del dedo o está dibujando, reiniciar todos los botones
-        if posicion is None or dibujando:
-            for boton in self.botones:
-                boton.en_hover = False
-                boton.tiempo_inicio_hover = None
-                boton.progreso_activacion = 0.0
-            return
-
-        # Verificar si el dedo está sobre algún botón
-        boton_activado = None
-
-        for boton in self.botones:
-            if boton.actualizar_estado_hover(posicion):
-                boton_activado = boton
-                break
-
-        # Si se ha activado un botón, desactivar el botón anterior y ejecutar la acción
-        if boton_activado:
-            # Desactivar el botón previamente seleccionado
-            if self.boton_seleccionado and self.boton_seleccionado != boton_activado:
-                self.boton_seleccionado.desactivar()
-
-            # Activar el nuevo botón y ejecutar su acción
-            boton_activado.activar()
-            boton_activado.ejecutar_accion()
-
-            # Actualizar el botón seleccionado
-            self.boton_seleccionado = boton_activado
-
-            logger.info(f"Botón '{boton_activado.etiqueta}' seleccionado mediante gesto táctil")
-
-    def registrar_eventos_mouse(self, nombre_ventana: str) -> None:
-        """
-        Registra la función de callback para eventos de mouse.
-
-        Args:
-            nombre_ventana: Nombre de la ventana de OpenCV.
-        """
-        # Crear una función de cierre para capturar self
-        def callback_mouse(evento: int, x: int, y: int, flags: int, param: Any) -> None:
-            self.procesar_evento_mouse(evento, x, y, flags, param)
-
-        cv2.setMouseCallback(nombre_ventana, callback_mouse)

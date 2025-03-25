@@ -1,133 +1,193 @@
 #!/usr/bin/env python3
 """
-Punto de entrada principal para la aplicación de pizarra digital.
+Script principal para ejecutar la aplicación Pizarra Digital.
 
-Este script inicia la aplicación y configura el logging.
+Este script es el punto de entrada principal para la aplicación,
+procesa los argumentos de línea de comandos y configura el entorno
+antes de iniciar la aplicación.
 """
 import os
 import sys
 import logging
 import argparse
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-# Añadir directorio raíz al path para importaciones relativas
+# Agregar directorio raíz al path para importar módulos
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Configuración inicial del logging
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Importar módulos de la aplicación
+from pizarra_digital.main import main
+from pizarra_digital.config import (
+    OPTIMIZATION_USE_ASYNC_CAPTURE,
+    OPTIMIZATION_SHOW_METRICS,
+    OPTIMIZATION_QUALITY,
+    OPTIMIZATION_SOLO_MANO_DERECHA,
+    CAMERA_MIRROR_MODE
+)
+
+# Configuración de logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-def parse_args() -> Dict[str, Any]:
+def parse_args() -> argparse.Namespace:
     """
     Procesa los argumentos de línea de comandos.
 
     Returns:
-        Diccionario con los argumentos procesados.
+        Namespace con los argumentos procesados.
     """
-    parser = argparse.ArgumentParser(description='Pizarra Digital con detección de gestos')
-
-    parser.add_argument('--camera', type=int, default=0,
-                      help='Índice de la cámara a utilizar (default: 0)')
-    parser.add_argument('--debug', action='store_true',
-                      help='Activar modo de depuración')
-    parser.add_argument('--no-async', action='store_true',
-                      help='Desactivar captura asíncrona (menor rendimiento pero mayor compatibilidad)')
-    parser.add_argument('--no-metrics', action='store_true',
-                      help='Ocultar métricas de rendimiento')
-    parser.add_argument('--quality', choices=['low', 'medium', 'high'], default='medium',
-                      help='Calidad de procesamiento (afecta rendimiento)')
-
-    return vars(parser.parse_args())
-
-def configurar_app(args: Dict[str, Any]) -> None:
-    """
-    Configura la aplicación según los argumentos recibidos.
-
-    Args:
-        args: Diccionario con argumentos de configuración.
-    """
-    from pizarra_digital.config import (
-        logger as config_logger,
-        CAMERA_INDEX,
+    parser = argparse.ArgumentParser(
+        description="Pizarra Digital - Aplicación de dibujo con gestos de manos"
     )
 
-    # Actualizar nivel de logging si estamos en modo debug
-    if args.get('debug', False):
+    # Argumentos de configuración
+    parser.add_argument(
+        "--camera",
+        type=int,
+        default=None,
+        help="Índice de la cámara a utilizar (default: 0)"
+    )
+
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Activar modo de depuración con información adicional"
+    )
+
+    parser.add_argument(
+        "--no-async",
+        action="store_true",
+        help="Desactivar captura asíncrona de video"
+    )
+
+    parser.add_argument(
+        "--no-metrics",
+        action="store_true",
+        help="Ocultar métricas de rendimiento en pantalla"
+    )
+
+    parser.add_argument(
+        "--quality",
+        choices=["low", "medium", "high"],
+        default="medium",
+        help="Calidad de procesamiento (low = máximo rendimiento, high = máxima calidad)"
+    )
+
+    parser.add_argument(
+        "--resolution",
+        choices=["low", "medium", "high"],
+        default="low",
+        help="Resolución de la cámara (low=320x240, medium=640x480, high=1280x720)"
+    )
+
+    parser.add_argument(
+        "--no-mirror",
+        action="store_true",
+        help="Desactivar el modo espejo de la cámara (por defecto está activado)"
+    )
+
+    # Grupo exclusivo para selección de mano
+    grupo_mano = parser.add_mutually_exclusive_group()
+    grupo_mano.add_argument(
+        "--mano-derecha",
+        action="store_true",
+        help="Detectar la mano derecha del usuario (la que está en tu lado derecho)"
+    )
+    grupo_mano.add_argument(
+        "--mano-izquierda",
+        action="store_true",
+        help="Detectar la mano izquierda del usuario (la que está en tu lado izquierdo)"
+    )
+    grupo_mano.add_argument(
+        "--ambas-manos",
+        action="store_true",
+        help="Detectar ambas manos del usuario"
+    )
+
+    return parser.parse_args()
+
+def configurar_app(args: argparse.Namespace) -> Dict[str, Any]:
+    """
+    Configura la aplicación basado en los argumentos de línea de comandos.
+
+    Args:
+        args: Argumentos de línea de comandos procesados.
+
+    Returns:
+        Diccionario con la configuración de la aplicación.
+    """
+    # Configurar nivel de logging
+    if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        config_logger.setLevel(logging.DEBUG)
         logger.debug("Modo de depuración activado")
 
-    # Configurar índice de cámara
-    camera_index = args.get('camera', CAMERA_INDEX)
-    if camera_index != CAMERA_INDEX:
-        # Modificar configuración global
-        import pizarra_digital.config as config
-        config.CAMERA_INDEX = camera_index
-        logger.info(f"Usando cámara con índice: {camera_index}")
+    # Mapear calidad a valor numérico
+    quality_map = {
+        "low": 0.5,      # Prioriza rendimiento sobre calidad
+        "medium": 0.8,   # Equilibrado
+        "high": 1.0      # Máxima calidad
+    }
 
-    # Configurar calidad/rendimiento
-    if 'quality' in args:
-        import pizarra_digital.config as config
-        import pizarra_digital.main as main
+    # Configuración de manos
+    solo_mano_derecha = args.mano_derecha or (not args.mano_izquierda and not args.ambas_manos)
+    solo_mano_izquierda = args.mano_izquierda
 
-        quality = args['quality']
-        if quality == 'low':
-            # Baja calidad, alto rendimiento
-            config.OPTIMIZATION_RESIZE_FACTOR = 0.5
-            main.USAR_PREDICCION_MANOS = True
-            logger.info("Configuración de rendimiento: ALTA (calidad baja)")
-        elif quality == 'high':
-            # Alta calidad, menor rendimiento
-            config.OPTIMIZATION_RESIZE_FACTOR = 1.0
-            main.USAR_PREDICCION_MANOS = False
-            logger.info("Configuración de rendimiento: BAJA (calidad alta)")
-        else:
-            # Configuración media (predeterminada)
-            config.OPTIMIZATION_RESIZE_FACTOR = 0.75
-            main.USAR_PREDICCION_MANOS = True
-            logger.info("Configuración de rendimiento: MEDIA (equilibrada)")
+    # Crear diccionario de configuración
+    config = {
+        "camera_index": args.camera,
+        "use_async_capture": not args.no_async,
+        "show_metrics": not args.no_metrics,
+        "quality_factor": quality_map[args.quality],
+        "solo_mano_derecha": solo_mano_derecha and not solo_mano_izquierda,
+        "solo_mano_izquierda": solo_mano_izquierda,
+        "mirror_mode": not args.no_mirror
+    }
 
-    # Configurar captura asíncrona
-    if args.get('no_async', False):
-        import pizarra_digital.main as main
-        main.USAR_CAPTURA_ASINCRONA = False
-        logger.info("Captura asíncrona desactivada")
+    # Registrar configuración
+    logger.info(f"Configuración: cámara={config['camera_index']}, "
+               f"async={config['use_async_capture']}, "
+               f"métricas={config['show_metrics']}, "
+               f"calidad={args.quality}, "
+               f"solo_mano_derecha={config['solo_mano_derecha']}, "
+               f"solo_mano_izquierda={config['solo_mano_izquierda']}, "
+               f"ambas_manos={args.ambas_manos}, "
+               f"resolución={args.resolution}, "
+               f"modo_espejo={config['mirror_mode']}")
 
-    # Configurar visualización de métricas
-    if args.get('no_metrics', False):
-        import pizarra_digital.main as main
-        main.MOSTRAR_METRICAS = False
-        logger.info("Visualización de métricas desactivada")
+    return config
 
-def main() -> None:
+def main_wrapper() -> None:
     """
-    Función principal que inicia la aplicación.
+    Función principal que inicializa y ejecuta la aplicación.
     """
-    logger.info("Iniciando aplicación de Pizarra Digital")
-
     try:
-        # Procesar argumentos de línea de comandos
+        # Procesar argumentos
         args = parse_args()
 
-        # Configurar la aplicación
-        configurar_app(args)
+        # Configurar aplicación
+        config = configurar_app(args)
 
-        # Importar e iniciar la aplicación principal
-        from pizarra_digital.main import ejecutar_app
-        ejecutar_app()
+        # Iniciar aplicación con la configuración
+        logger.info("Iniciando Pizarra Digital...")
+        main(
+            use_async_capture=config["use_async_capture"],
+            show_metrics=config["show_metrics"],
+            quality_factor=config["quality_factor"],
+            solo_mano_derecha=config["solo_mano_derecha"],
+            solo_mano_izquierda=config["solo_mano_izquierda"],
+            mirror_mode=config["mirror_mode"]
+        )
 
-    except ImportError as e:
-        logger.error(f"Error al importar módulos: {e}")
-        logger.error("Asegúrate de haber instalado todas las dependencias")
-        sys.exit(1)
+        logger.info("Aplicación terminada correctamente")
+
     except KeyboardInterrupt:
         logger.info("Aplicación interrumpida por el usuario")
     except Exception as e:
-        logger.exception(f"Error inesperado: {e}")
+        logger.error(f"Error al ejecutar la aplicación: {e}", exc_info=True)
         sys.exit(1)
 
-    logger.info("Aplicación finalizada")
-
 if __name__ == "__main__":
-    main()
+    main_wrapper()

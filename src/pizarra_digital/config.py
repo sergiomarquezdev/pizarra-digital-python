@@ -1,10 +1,11 @@
 """
-Módulo de configuración.
+Módulo de configuración centralizada para la aplicación Pizarra Digital.
 
-Este módulo contiene todas las configuraciones globales para la aplicación.
+Este módulo contiene todas las constantes y parámetros configurables
+que controlan el comportamiento de la aplicación.
 """
 import logging
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, Any
 
 # Configuración del logger
 logging.basicConfig(level=logging.INFO,
@@ -12,81 +13,83 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 # Configuración de la cámara
-CAMERA_INDEX: int = 0  # Índice de la cámara (0 = cámara predeterminada)
-CAMERA_WIDTH: int = 640  # Ancho de la captura de la cámara
-CAMERA_HEIGHT: int = 480  # Alto de la captura de la cámara
-CAMERA_FPS: int = 30  # FPS objetivo para la cámara
-CAMERA_BUFFER_SIZE: int = 1  # Tamaño del buffer de la cámara (menor = más reciente)
+CAMERA_WIDTH: int = 640  # Aumentado de 320 a 640
+CAMERA_HEIGHT: int = 480  # Aumentado de 240 a 480
+CAMERA_INDEX: int = 0  # Índice de la cámara a utilizar (0 = cámara por defecto)
+CAMERA_FPS: int = 60  # FPS objetivo para la captura de video
+CAMERA_BUFFER_SIZE: int = 3  # Tamaño del buffer de la cámara
+CAMERA_MIRROR_MODE: bool = True  # Mostrar la cámara en modo espejo (efecto de espejo)
 
 # Configuración MediaPipe
-MEDIAPIPE_MAX_HANDS: int = 1  # Número máximo de manos a detectar
-MEDIAPIPE_DETECTION_CONFIDENCE: float = 0.5  # Umbral de confianza para detección
+MEDIAPIPE_MAX_HANDS: int = 1  # Detectar solo una mano para mejor rendimiento
+MEDIAPIPE_DETECTION_CONFIDENCE: float = 0.7  # Umbral de confianza para detección
 MEDIAPIPE_TRACKING_CONFIDENCE: float = 0.5  # Umbral de confianza para seguimiento
+MEDIAPIPE_MANO_IZQUIERDA: bool = True  # Detectar mano izquierda en lugar de la derecha
 
 # Configuración del lienzo
-CANVAS_WIDTH: int = 640  # Ancho del lienzo
-CANVAS_HEIGHT: int = 480  # Alto del lienzo
-CANVAS_BACKGROUND: Tuple[int, int, int] = (0, 0, 0)  # Color de fondo (BGR)
+CANVAS_WIDTH: int = 640  # Aumentado para coincidir con la cámara
+CANVAS_HEIGHT: int = 480  # Aumentado para coincidir con la cámara
+CANVAS_BACKGROUND_COLOR: Tuple[int, int, int] = (255, 255, 255)  # Blanco
+CANVAS_LINE_THICKNESS: int = 2  # Grosor de línea adecuado para mayor resolución
+CANVAS_CIRCLE_RADIUS: int = 5  # Radio de círculo
 
-# Colores para dibujo (en formato BGR)
-DRAWING_COLORS: Dict[str, Tuple[int, int, int]] = {
-    "negro": (0, 0, 0),
-    "blanco": (255, 255, 255),
-    "rojo": (0, 0, 255),
+# Colores para dibujo
+DEFAULT_COLOR: Tuple[int, int, int] = (0, 0, 255)  # Color de dibujo predeterminado (BGR: Rojo)
+COLORS: Dict[str, Tuple[int, int, int]] = {
+    "rojo": (0, 0, 255),     # BGR (OpenCV usa BGR)
     "verde": (0, 255, 0),
     "azul": (255, 0, 0),
-    "amarillo": (0, 255, 255)
+    "amarillo": (0, 255, 255),
+    "magenta": (255, 0, 255),
+    "cian": (255, 255, 0),
+    "negro": (0, 0, 0),
+    "blanco": (255, 255, 255)
 }
-DEFAULT_DRAWING_COLOR: Tuple[int, int, int] = DRAWING_COLORS["blanco"]
-DRAWING_THICKNESS: int = 5  # Grosor del trazo
 
-# Configuración de la aplicación
-APP_NAME: str = "Pizarra Digital"  # Nombre de la ventana
-EXIT_KEY: str = "q"  # Tecla para salir de la aplicación
+# Parámetros optimización de rendimiento
+OPTIMIZATION_RESIZE_FACTOR: float = 1.0  # Factor de redimensionamiento (1.0 = sin cambios)
+OPTIMIZATION_SKIP_FRAMES: int = 1  # Saltar frames para mejor rendimiento (0 = no saltar)
+OPTIMIZATION_PREDICTION_THRESHOLD: float = 0.05  # Tiempo límite para activar predicción (segundos)
+OPTIMIZATION_MAX_PREDICTION_FRAMES: int = 3  # Máximo de frames para predicción
+OPTIMIZATION_USE_ASYNC_CAPTURE: bool = False  # Usar captura asíncrona
+OPTIMIZATION_SHOW_METRICS: bool = True  # Mostrar métricas de rendimiento
+OPTIMIZATION_QUALITY: float = 0.7  # Factor de calidad (0-1)
+OPTIMIZATION_BUFFER_SIZE: int = 10  # Tamaño del buffer para operaciones de dibujo
+OPTIMIZATION_MEMORY_LIMIT_MB: int = 100  # Límite de memoria en MB para el buffer de operaciones
+OPTIMIZATION_SOLO_MANO_DERECHA: bool = True  # Solo detectar la mano derecha
 
-# Configuración de gestos
-# Distancia mínima (en píxeles) entre puntos para considerarlos diferentes
-MIN_DRAWING_DISTANCE: int = 5
-# Distancia máxima entre puntos para interpolar en movimientos rápidos
-MAX_INTERPOLATION_DISTANCE: int = 50
+# Configuración de la interfaz de usuario
+UI_BUTTON_SIZE: int = 40  # Aumentado para mayor resolución
+UI_BUTTON_SPACING: int = 10  # Espaciado entre botones
+UI_BUTTON_RADIUS: int = 3  # Radio de esquinas redondeadas
+UI_PANEL_HEIGHT: int = 50  # Altura del panel de herramientas
+UI_FOOTER_HEIGHT: int = 30  # Altura del footer para métricas en la parte inferior
+UI_PANEL_ALPHA: float = 0.7  # Transparencia del panel (0-1)
+UI_SHOW_PALETTE: bool = True  # Mostrar paleta de colores
+UI_BUTTON_CORNER_RADIUS: int = 10
+UI_COLOR_BUTTON_SIZE: int = 30
 
-# Optimización de rendimiento
-OPTIMIZATION_RESIZE_FACTOR: float = 0.75  # Factor de escala para procesamiento
-OPTIMIZATION_SKIP_FRAMES: int = 0  # Número de fotogramas a saltar (0 = procesar todos)
+# Configuración de multihilo
+MULTITHREAD_ENABLED: bool = True  # Habilitar procesamiento multihilo
+MULTITHREAD_MAX_WORKERS: int = 4  # Número máximo de workers para procesamiento paralelo
 
-# Configuración de métricas
-FPS_HISTORY_SIZE: int = 30  # Número de fotogramas para calcular FPS promedio
-PERFORMANCE_METRICS_LOGGING: bool = True  # Registrar métricas de rendimiento
+# Configuración de depuración
+DEBUG_ENABLED: bool = False  # Habilitar modo de depuración
+DEBUG_DRAW_LANDMARKS: bool = True  # Dibujar landmarks de manos
+DEBUG_DRAW_HAND_CONNECTIONS: bool = True  # Dibujar conexiones entre landmarks
+DEBUG_LOG_PERFORMANCE: bool = True  # Registrar métricas de rendimiento
 
-# Configuración de optimización para detección de manos
-HAND_DETECTION_SKIP_FRAMES: int = 0  # Saltar fotogramas para detección (0 = detectar todos)
-PREDICTION_FRAMES_THRESHOLD: int = 3  # Umbral de fotogramas para activar predicción
-PREDICTION_TIME_THRESHOLD: float = 0.05  # Umbral de tiempo (segundos) para predicción
-PREDICTION_DISTANCE_THRESHOLD: int = 100  # Distancia máxima para usar predicción
+# Configuración para optimización adaptativa de dibujo
+ADAPTIVE_DRAWING_ENABLED: bool = True  # Habilitar dibujo adaptativo
+ADAPTIVE_THICKNESS_MIN: int = 1  # Reducido: Grosor mínimo
+ADAPTIVE_THICKNESS_MAX: int = 5  # Reducido: Grosor máximo
+ADAPTIVE_VELOCITY_THRESHOLD: float = 50.0  # Umbral de velocidad para grosor adaptativo
 
-# Configuración de optimización para dibujo
-DRAWING_BATCH_SIZE: int = 5  # Número de operaciones a acumular antes de dibujar
-ADAPTIVE_THICKNESS: bool = True  # Ajustar grosor según velocidad de movimiento
-THICKNESS_VELOCITY_THRESHOLD: int = 500  # Umbral de velocidad para ajuste de grosor
-
-# Configuración para depuración
-DEBUG_MODE: bool = False  # Modo de depuración
-SHOW_LANDMARKS: bool = True  # Mostrar landmarks de la mano
-SHOW_FINGERTIPS: bool = True  # Resaltar las puntas de los dedos
-SHOW_PERFORMANCE_METRICS: bool = True  # Mostrar métricas en pantalla
-
-# Configuración para la interfaz de usuario
-UI_BUTTON_SIZE: int = 40  # Tamaño de los botones
-UI_BUTTON_MARGIN: int = 10  # Margen entre botones
-UI_BUTTON_RADIUS: int = 20  # Radio de los botones (para esquinas redondeadas)
-UI_PANEL_HEIGHT: int = 60  # Altura del panel de la interfaz
-UI_PANEL_COLOR: Tuple[int, int, int] = (50, 50, 50)  # Color del panel (BGR)
-UI_PANEL_ALPHA: float = 0.7  # Transparencia del panel
-UI_TEXT_COLOR: Tuple[int, int, int] = (255, 255, 255)  # Color del texto
-UI_TEXT_THICKNESS: int = 1  # Grosor del texto
-
-# Configuración para optimización de multihilo
-THREAD_QUEUE_SIZE: int = 3  # Tamaño de la cola para frames capturados
-THREAD_SLEEP_TIME: float = 0.001  # Tiempo de espera entre iteraciones (segundos)
+# Configuración para el grosor adaptativo basado en velocidad
+DRAWING_SPEED_SMOOTH_FACTOR: float = 0.3  # Factor de suavizado para cálculo de velocidad
+DRAWING_MIN_THICKNESS: int = 1  # Reducido: Grosor mínimo para dibujo (movimientos rápidos)
+DRAWING_MAX_THICKNESS: int = 5  # Reducido: Grosor máximo para dibujo (movimientos lentos)
+DRAWING_SPEED_THRESHOLD_LOW: float = 100.0  # Umbral de velocidad baja (píxeles/segundo)
+DRAWING_SPEED_THRESHOLD_HIGH: float = 800.0  # Umbral de velocidad alta (píxeles/segundo)
 
 logger.debug("Configuración cargada correctamente")

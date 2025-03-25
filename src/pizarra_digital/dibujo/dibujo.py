@@ -20,10 +20,11 @@ logger = logging.getLogger(__name__)
 # Parámetros para mejorar el rendimiento del dibujo
 # Mayor valor significa más interpolación y mayor suavizado para movimientos rápidos
 INTERPOLACION_ADAPTATIVA: bool = True  # Ajustar la interpolación según la velocidad
-UMBRAL_VELOCIDAD_ALTA: float = 50.0  # Píxeles por frame (umbral para considerar movimiento rápido)
-MAX_PUNTOS_INTERPOLADOS: int = 20  # Máximo de puntos a interpolar en movimientos muy rápidos
-TAMANO_FILTRO_SUAVIZADO: int = 3  # Tamaño del filtro de suavizado
-PESO_PUNTO_ACTUAL: float = 2.0  # Peso del punto actual en el filtro (mayor = menos suavizado)
+UMBRAL_VELOCIDAD_ALTA: float = 30.0  # Reducido: Umbral para considerar movimiento rápido (píxeles por frame)
+MAX_PUNTOS_INTERPOLADOS: int = 40  # Aumentado: Máximo de puntos a interpolar en movimientos muy rápidos
+TAMANO_FILTRO_SUAVIZADO: int = 5  # Aumentado: Tamaño del filtro de suavizado
+PESO_PUNTO_ACTUAL: float = 1.5  # Reducido: Peso del punto actual (para mayor suavizado)
+UMBRAL_DISTANCIA_MINIMA: float = 1.0  # Distancia mínima entre puntos para dibujar (evita sobremuestreo)
 
 class DibujoMano:
     """Clase para controlar el dibujo mediante gestos de manos."""
@@ -55,6 +56,18 @@ class DibujoMano:
         # Estado del dibujo
         self.dibujando: bool = False
 
+        # Estados para gestionar el gesto de pinza
+        self.dibujo_habilitado: bool = True  # Indica si el dibujo está habilitado globalmente (toggle)
+        self.ultimo_gesto_pinza: bool = False  # Último estado del gesto de pinza
+        self.tiempo_ultimo_cambio_pinza: float = 0.0  # Para evitar cambios muy rápidos
+        self.tiempo_espera_cambio_pinza: float = 0.5  # Tiempo mínimo entre cambios de estado (segundos)
+
+        # Contadores para estabilizar la detección de gestos
+        self.contador_deteccion_pinza: int = 0  # Contador para detectar pinza mantenida
+        self.contador_umbral_pinza: int = 3  # Número de frames consecutivos necesarios
+        self.contador_no_pinza: int = 0  # Contador para confirmar que no hay pinza
+        self.umbral_no_pinza: int = 5  # Frames necesarios para confirmar que no hay pinza
+
         # Métricas de rendimiento
         self.puntos_interpolados_total: int = 0
         self.frames_procesados: int = 0
@@ -63,36 +76,67 @@ class DibujoMano:
         logger.info("Controlador de dibujo inicializado con optimizaciones para movimientos rápidos")
 
     def procesar_mano(self,
-                     mano: Optional[Dict[str, Any]],
-                     detector_manos: Any) -> None:
+                     mano: Dict[str, Any]) -> None:
         """
         Procesa la información de una mano y realiza acciones de dibujo según el gesto.
 
         Args:
             mano: Diccionario con la información de la mano detectada.
-            detector_manos: Instancia del detector de manos para utilizar sus métodos.
         """
+        from ..deteccion.deteccion import INDEX_FINGER_TIP
+
+        # Importar después de la definición para evitar importaciones circulares
+        from ..deteccion.deteccion import DetectorManos
+        detector = DetectorManos()
+
         self.frames_procesados += 1
         tiempo_actual = time.time()
 
-        if mano is None:
-            # Si no se detecta ninguna mano, dejar de dibujar
-            self.dibujando = False
-            self.posicion_anterior = None
-            self.historial_posiciones.clear()
-            self.historial_tiempos.clear()
-            self.velocidad_actual = 0.0
-            return
-
         # Comprobar si el dedo índice está extendido
-        indice_extendido = detector_manos.es_indice_extendido(mano)
+        indice_extendido = self._esta_indice_extendido(mano)
+
+        # Detectar gesto de pinza (pulgar e índice juntos)
+        gesto_pinza_actual = detector.es_gesto_pinza(mano)
+
+        # Lógica mejorada para detección de pinza estable
+        if gesto_pinza_actual:
+            # Incrementar contador si se detecta pinza
+            self.contador_deteccion_pinza += 1
+            self.contador_no_pinza = 0  # Resetear contador de no pinza
+
+            # Detectar cambio de estado solo cuando la pinza se mantiene por varios frames
+            # y ha pasado suficiente tiempo desde el último cambio
+            if (self.contador_deteccion_pinza >= self.contador_umbral_pinza and
+                not self.ultimo_gesto_pinza and
+                tiempo_actual - self.tiempo_ultimo_cambio_pinza > self.tiempo_espera_cambio_pinza):
+
+                # Cambiar el estado del dibujo (activar/desactivar)
+                self.dibujo_habilitado = not self.dibujo_habilitado
+                logger.info(f"Dibujo {'habilitado' if self.dibujo_habilitado else 'deshabilitado'} mediante gesto de pinza")
+                self.tiempo_ultimo_cambio_pinza = tiempo_actual
+                self.ultimo_gesto_pinza = True
+
+                # Reproducir feedback por consola
+                print(f"*** CAMBIO MODO DIBUJO: {'ACTIVADO' if self.dibujo_habilitado else 'DESACTIVADO'} ***")
+        else:
+            # Incrementar contador si no se detecta pinza
+            self.contador_no_pinza += 1
+
+            # Resetear estado de pinza solo después de varios frames sin pinza
+            # esto evita falsos negativos temporales
+            if self.contador_no_pinza >= self.umbral_no_pinza:
+                self.ultimo_gesto_pinza = False
+                self.contador_deteccion_pinza = 0
 
         # Obtener la posición de la punta del dedo índice
-        punto_actual = detector_manos.obtener_punta_indice(mano)
+        punto_actual = self._obtener_punta_indice(mano)
 
         if punto_actual is None:
             # Si no se puede obtener la posición del dedo índice, no hacer nada
+            logger.warning("No se pudo obtener la posición del dedo índice")
             return
+
+        logger.debug(f"Punto del dedo índice original: ({punto_actual[0]}, {punto_actual[1]})")
 
         # Calcular velocidad del movimiento si tenemos una posición anterior
         if self.posicion_anterior is not None:
@@ -117,22 +161,37 @@ class DibujoMano:
 
         # Obtener la posición suavizada para reducir el ruido
         punto_suavizado = self._suavizar_posicion()
+        logger.debug(f"Punto suavizado: ({punto_suavizado[0]}, {punto_suavizado[1]})")
 
-        if indice_extendido:
+        # Solo dibujar si el dibujo está habilitado y el índice está extendido
+        if self.dibujo_habilitado and indice_extendido:
             # Si el dedo índice está extendido, dibujar
             if not self.dibujando:
                 # Si es el primer punto al comenzar a dibujar
                 self.dibujando = True
                 self.posicion_anterior = punto_suavizado
-                self.lienzo.dibujar_punto(punto_suavizado)
+                logger.debug(f"Dibujando punto inicial en: ({punto_suavizado[0]}, {punto_suavizado[1]})")
+                self.lienzo.dibujar_punto(punto_suavizado[0], punto_suavizado[1])
             else:
                 # Si ya estábamos dibujando, trazar una línea desde el punto anterior
                 if self.posicion_anterior is not None:
-                    # Determinar puntos a interpolar según la velocidad
-                    num_puntos_interpolar = self._calcular_puntos_interpolar()
+                    # Calcular distancia con el punto anterior
+                    dx = punto_suavizado[0] - self.posicion_anterior[0]
+                    dy = punto_suavizado[1] - self.posicion_anterior[1]
+                    distancia = np.sqrt(dx*dx + dy*dy)
 
-                    if num_puntos_interpolar > 1:
-                        # Interpolar puntos para movimientos rápidos usando el optimizador
+                    # Solo dibujar si hay suficiente movimiento
+                    if distancia >= UMBRAL_DISTANCIA_MINIMA:
+                        # Determinar puntos a interpolar según la velocidad
+                        num_puntos_interpolar = self._calcular_puntos_interpolar()
+
+                        # Siempre usar al menos 2 puntos para suavizar el movimiento
+                        num_puntos_interpolar = max(2, num_puntos_interpolar)
+
+                        # Ajustar la interpolación basado en la distancia
+                        num_puntos_interpolar = min(num_puntos_interpolar, int(distancia * 0.5))
+
+                        # Interpolar puntos para crear una línea continua
                         puntos_interpolados = self._interpolar_puntos(
                             self.posicion_anterior,
                             punto_suavizado,
@@ -142,21 +201,99 @@ class DibujoMano:
                         # Dibujar líneas entre todos los puntos interpolados
                         punto_anterior = self.posicion_anterior
                         for punto in puntos_interpolados:
-                            self.lienzo.dibujar_linea(punto_anterior, punto)
+                            logger.debug(f"Dibujando línea interpolada de ({punto_anterior[0]}, {punto_anterior[1]}) a ({punto[0]}, {punto[1]})")
+                            self.lienzo.dibujar_linea(
+                                punto_anterior[0], punto_anterior[1],
+                                punto[0], punto[1]
+                            )
                             punto_anterior = punto
 
                         # Actualizar métricas
                         self.puntos_interpolados_total += len(puntos_interpolados)
-                    else:
-                        # Para movimientos lentos, dibujo directo sin interpolación
-                        self.lienzo.dibujar_linea(self.posicion_anterior, punto_suavizado)
 
-                # Actualizar la posición anterior para el próximo frame
-                self.posicion_anterior = punto_suavizado
+                    # Actualizar la posición anterior para el próximo frame
+                    self.posicion_anterior = punto_suavizado
         else:
-            # Si el dedo índice no está extendido, dejar de dibujar
+            # Si el dibujo está deshabilitado o el índice no está extendido, dejar de dibujar
             self.dibujando = False
             self.posicion_anterior = None
+
+    def _obtener_punta_indice(self, mano: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+        """
+        Obtiene las coordenadas de la punta del dedo índice.
+
+        Args:
+            mano: Diccionario con información de la mano.
+
+        Returns:
+            Tupla de coordenadas (x, y) o None si no está disponible.
+        """
+        try:
+            landmarks = mano["landmarks"]
+            indice_tip_idx = 8  # Índice de la punta del dedo índice
+
+            if indice_tip_idx < len(landmarks):
+                punto = landmarks[indice_tip_idx]
+                logger.debug(f"Landmark original del índice: x={punto['x']}, y={punto['y']}")
+
+                # Verificar si la posición es válida
+                if punto["x"] < 0 or punto["y"] < 0:
+                    logger.warning(f"Coordenadas inválidas en el landmark: {punto}")
+                    return None
+
+                # Verificar si hay un valor 'prediccion' en la mano
+                es_prediccion = mano.get("prediccion", False)
+                if es_prediccion:
+                    logger.debug("Usando punto PREDICHO del índice")
+
+                # Las coordenadas ya están en el espacio de la cámara, que coincide con el lienzo
+                # (ambos tienen el mismo tamaño: CAMERA_WIDTH x CAMERA_HEIGHT)
+                x_lienzo = int(punto["x"])
+                y_lienzo = int(punto["y"])
+
+                # Verificar que las coordenadas estén dentro de los límites del lienzo
+                x_lienzo = max(0, min(x_lienzo, self.lienzo.ancho - 1))
+                y_lienzo = max(0, min(y_lienzo, self.lienzo.alto - 1))
+
+                logger.debug(f"Coordenadas usadas: ({x_lienzo}, {y_lienzo})")
+
+                return (x_lienzo, y_lienzo)
+        except (KeyError, IndexError) as e:
+            logger.debug(f"Error al obtener punta del índice: {e}")
+
+        return None
+
+    def _esta_indice_extendido(self, mano: Dict[str, Any]) -> bool:
+        """
+        Determina si el dedo índice está extendido.
+
+        Args:
+            mano: Diccionario con información de la mano.
+
+        Returns:
+            True si el dedo índice está extendido, False en caso contrario.
+        """
+        try:
+            landmarks = mano["landmarks"]
+
+            # Verificar si tenemos suficientes landmarks
+            if len(landmarks) < 9:  # Necesitamos hasta el punto 8 (punta del índice)
+                logger.debug(f"No hay suficientes landmarks para verificar si el índice está extendido. Encontrados: {len(landmarks)}")
+                return False
+
+            # Obtener puntos clave
+            punta_indice = landmarks[8]
+            base_indice = landmarks[5]
+
+            # Calcular si el dedo está extendido
+            # La punta debe estar más arriba (coordenada y menor) que la base
+            extendido = punta_indice["y"] < base_indice["y"]
+            logger.debug(f"Índice extendido: {extendido} (punta y: {punta_indice['y']}, base y: {base_indice['y']})")
+            return extendido
+
+        except (KeyError, IndexError) as e:
+            logger.debug(f"Error al determinar si el índice está extendido: {e}")
+            return False
 
     def _calcular_puntos_interpolar(self) -> int:
         """
@@ -175,15 +312,15 @@ class DibujoMano:
         fps_estimado = 30.0  # Estimación conservadora de FPS
         velocidad_por_frame = self.velocidad_actual / fps_estimado
 
-        if velocidad_por_frame <= 5.0:
-            # Movimiento lento, no interpolamos
-            return 1
+        if velocidad_por_frame <= 3.0:  # Reducido para detectar movimientos lentos con más sensibilidad
+            # Movimiento lento, interpolación mínima
+            return 2  # Mínimo de interpolación para evitar huecos
         elif velocidad_por_frame <= UMBRAL_VELOCIDAD_ALTA:
-            # Movimiento medio, interpolación ligera
-            return int(velocidad_por_frame / 5)
+            # Movimiento medio, interpolación moderada
+            return int(velocidad_por_frame / 3)  # Más puntos intermedios
         else:
             # Movimiento rápido, interpolación agresiva
-            puntos = int(velocidad_por_frame / 2.5)
+            puntos = int(velocidad_por_frame / 1.5)  # Más puntos para movimientos rápidos
             return min(puntos, MAX_PUNTOS_INTERPOLADOS)  # Limitar para evitar exceso
 
     def _actualizar_historial(self, punto: Tuple[int, int], tiempo: float) -> None:
@@ -370,3 +507,128 @@ class DibujoMano:
             "fps_promedio": fps_promedio,
             "tamano_historial": len(self.historial_posiciones)
         }
+
+    def es_dibujo_habilitado(self) -> bool:
+        """
+        Indica si el dibujo está actualmente habilitado.
+
+        Returns:
+            True si el dibujo está habilitado, False en caso contrario.
+        """
+        return self.dibujo_habilitado
+
+    def toggle_dibujo_habilitado(self) -> None:
+        """
+        Cambia el estado del dibujo entre habilitado y deshabilitado.
+        """
+        self.dibujo_habilitado = not self.dibujo_habilitado
+        logger.info(f"Dibujo {'habilitado' if self.dibujo_habilitado else 'deshabilitado'} manualmente")
+
+    def actualizar_posicion(self, x: int, y: int) -> None:
+        """
+        Actualiza la posición y dibuja en el lienzo.
+        Esta función es una alternativa moderna a procesar_mano.
+
+        Args:
+            x: Coordenada x del punto
+            y: Coordenada y del punto
+        """
+        tiempo_actual = time.time()
+        punto_actual = (x, y)
+
+        # Actualizar el historial de posiciones y tiempos
+        self._actualizar_historial(punto_actual, tiempo_actual)
+
+        # Obtener la posición suavizada para reducir el ruido
+        punto_suavizado = self._suavizar_posicion()
+
+        # Calcular velocidad si hay posición anterior
+        if self.posicion_anterior is not None:
+            dx = punto_suavizado[0] - self.posicion_anterior[0]
+            dy = punto_suavizado[1] - self.posicion_anterior[1]
+            distancia = np.sqrt(dx*dx + dy*dy)
+            dt = tiempo_actual - self.ultimo_tiempo_punto
+
+            if dt > 0:
+                velocidad = distancia / dt  # píxeles por segundo
+            else:
+                velocidad = 0
+
+            # Suavizar la velocidad
+            alpha = 0.3  # Factor de suavizado (0-1)
+            self.velocidad_actual = alpha * velocidad + (1 - alpha) * self.velocidad_actual
+
+            # Solo dibujar si hay suficiente movimiento
+            if distancia >= UMBRAL_DISTANCIA_MINIMA:
+                # Determinar puntos a interpolar según la velocidad
+                num_puntos_interpolar = self._calcular_puntos_interpolar()
+                num_puntos_interpolar = max(2, num_puntos_interpolar)
+
+                # Ajustar la interpolación basado en la distancia
+                num_puntos_interpolar = min(num_puntos_interpolar, int(distancia * 0.5))
+
+                # Interpolar puntos para crear una línea continua
+                puntos_interpolados = self._interpolar_puntos(
+                    self.posicion_anterior,
+                    punto_suavizado,
+                    num_puntos_interpolar
+                )
+
+                # Dibujar líneas entre todos los puntos interpolados
+                punto_anterior = self.posicion_anterior
+                for punto in puntos_interpolados:
+                    self.lienzo.dibujar_linea(
+                        punto_anterior[0], punto_anterior[1],
+                        punto[0], punto[1]
+                    )
+                    punto_anterior = punto
+
+                # Actualizar métricas
+                self.puntos_interpolados_total += len(puntos_interpolados)
+        else:
+            # Si es el primer punto, simplemente dibujarlo
+            self.lienzo.dibujar_punto(punto_suavizado[0], punto_suavizado[1])
+
+        # Actualizar la posición anterior para el próximo frame
+        self.posicion_anterior = punto_suavizado
+        self.ultimo_tiempo_punto = tiempo_actual
+        self.dibujando = True
+
+    def actualizar_posicion_sin_dibujar(self, x: int, y: int) -> None:
+        """
+        Actualiza la posición del puntero sin dibujar.
+        Útil para seguir el movimiento cuando el dedo no está en posición de dibujo.
+
+        Args:
+            x: Coordenada x del punto
+            y: Coordenada y del punto
+        """
+        tiempo_actual = time.time()
+        punto_actual = (x, y)
+
+        # Actualizar el historial de posiciones y tiempos
+        self._actualizar_historial(punto_actual, tiempo_actual)
+
+        # Obtener la posición suavizada
+        punto_suavizado = self._suavizar_posicion()
+
+        # Calcular velocidad si hay posición anterior (para métricas)
+        if self.posicion_anterior is not None:
+            dx = punto_suavizado[0] - self.posicion_anterior[0]
+            dy = punto_suavizado[1] - self.posicion_anterior[1]
+            distancia = np.sqrt(dx*dx + dy*dy)
+            dt = tiempo_actual - self.ultimo_tiempo_punto
+
+            if dt > 0:
+                velocidad = distancia / dt
+            else:
+                velocidad = 0
+
+            # Actualizar velocidad
+            alpha = 0.3
+            self.velocidad_actual = alpha * velocidad + (1 - alpha) * self.velocidad_actual
+
+        # Actualizar estado pero sin dibujar
+        self.posicion_anterior = punto_suavizado
+        self.ultimo_tiempo_punto = tiempo_actual
+        self.dibujando = False

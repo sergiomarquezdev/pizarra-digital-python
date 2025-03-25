@@ -1,8 +1,9 @@
 """
-Módulo para la captura de video mediante OpenCV.
+Módulo para la captura de video desde la cámara.
 
-Este módulo proporciona funciones para inicializar la cámara web,
-capturar fotogramas y gestionar los recursos de la cámara.
+Este módulo proporciona clases y funciones para capturar video
+desde la cámara del sistema, con soporte para captura síncrona
+y asíncrona para mejorar el rendimiento.
 """
 import logging
 import cv2
@@ -23,282 +24,276 @@ class CameraError(Exception):
     """Excepción personalizada para errores relacionados con la cámara."""
     pass
 
-class CapturaAsincrona:
-    """
-    Clase para capturar frames de la cámara en un hilo separado.
+class CapturaVideo:
+    """Clase para la captura de video síncrona desde la cámara."""
 
-    Esta implementación permite que la captura de la cámara se ejecute en segundo plano,
-    evitando bloqueos en el hilo principal y proporcionando el frame más reciente
-    cuando sea necesario.
-    """
-
-    def __init__(self,
-                camera_index: int = CAMERA_INDEX,
-                buffer_size: int = 1,
-                target_fps: int = 30,
-                max_queue_size: int = 2) -> None:
+    def __init__(self, camara_index: int = 0, width: int = 640, height: int = 480) -> None:
         """
-        Inicializa el sistema de captura asíncrona de la cámara.
+        Inicializa la captura de video con la cámara especificada.
 
         Args:
-            camera_index: Índice de la cámara a utilizar.
-            buffer_size: Tamaño del buffer de la cámara.
-            target_fps: FPS objetivo para la captura.
-            max_queue_size: Tamaño máximo de la cola de frames.
+            camara_index: Índice de la cámara (0 para la cámara predeterminada).
+            width: Ancho deseado para los frames capturados.
+            height: Alto deseado para los frames capturados.
         """
-        self.camera_index = camera_index
-        self.buffer_size = buffer_size
-        self.target_fps = target_fps
-
-        # Cola para almacenar los frames capturados
-        self.frames_queue = queue.Queue(maxsize=max_queue_size)
-
-        # Variables de control
-        self.running = False
+        self.camara_index = camara_index
+        self.width = width
+        self.height = height
         self.cap = None
-        self.thread = None
+        self.inicializar()
 
-        # Estadísticas de rendimiento
-        self.fps_actual = 0.0
-        self.frames_procesados = 0
-        self.tiempo_ultimo_calculo_fps = time.time()
+        # Métricas de rendimiento
+        self.frames_capturados = 0
+        self.tiempo_ultimo_frame = 0.0
+        self.tiempo_inicio = time.time()
 
-        logger.info("Inicializando sistema de captura asíncrona...")
+        logger.info(f"CapturaVideo inicializada: cámara={camara_index}, "
+                  f"resolución={width}x{height}")
 
-    def iniciar(self) -> bool:
-        """
-        Inicia el hilo de captura de la cámara.
-
-        Returns:
-            bool: True si se inició correctamente, False en caso contrario.
-        """
+    def inicializar(self) -> None:
+        """Inicializa la captura de video con la configuración especificada."""
         try:
-            # Intentar abrir la cámara
-            self.cap = self._inicializar_camara()
-            if self.cap is None:
-                return False
+            self.cap = cv2.VideoCapture(self.camara_index)
 
-            # Configurar y empezar el hilo
-            self.running = True
-            self.thread = threading.Thread(target=self._capture_loop, daemon=True)
-            self.thread.start()
-            logger.info("Hilo de captura de cámara iniciado correctamente")
-            return True
+            # Configurar propiedades de la cámara
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
 
+            if not self.cap.isOpened():
+                logger.error(f"No se pudo abrir la cámara {self.camara_index}")
+                raise RuntimeError(f"No se pudo abrir la cámara {self.camara_index}")
+
+            logger.info("Captura de video inicializada correctamente")
         except Exception as e:
-            logger.error(f"Error al iniciar la captura asíncrona: {e}")
-            self.detener()
-            return False
+            logger.error(f"Error al inicializar la cámara: {e}")
+            raise
 
-    def _inicializar_camara(self) -> Optional[cv2.VideoCapture]:
+    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         """
-        Inicializa la cámara probando diferentes índices.
+        Lee un frame de la cámara.
 
         Returns:
-            VideoCapture: Objeto de captura de video configurado o None si falla.
+            Tupla con (éxito, frame):
+            - éxito: True si se pudo leer el frame correctamente.
+            - frame: Array de NumPy con el frame capturado o None si hubo error.
         """
-        # Lista de índices de cámara a intentar, empezando por el configurado
-        indices_camara = [self.camera_index, 0, 1, 2]
-        # Eliminar duplicados manteniendo el orden
-        indices_camara = list(dict.fromkeys(indices_camara))
-
-        for indice in indices_camara:
-            try:
-                logger.info(f"Intentando abrir la cámara con índice {indice}...")
-                # Intentar abrir la cámara con el índice actual
-                cap = cv2.VideoCapture(indice)
-
-                # Verificar si la cámara se abrió correctamente
-                if cap.isOpened():
-                    # Configurar la resolución de la cámara
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-
-                    # Optimizaciones para mejorar el rendimiento
-                    cap.set(cv2.CAP_PROP_FPS, self.target_fps)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
-                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # MJPG suele ser más rápido
-
-                    # Leer un fotograma de prueba para asegurarse de que funciona
-                    ret, _ = cap.read()
-                    if not ret:
-                        logger.warning(f"Se pudo abrir la cámara {indice} pero no se pudo leer un fotograma")
-                        cap.release()
-                        continue
-
-                    # Registrar que la cámara se ha inicializado correctamente
-                    actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-                    actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                    self.camera_index = indice  # Actualizar el índice que funcionó
-                    logger.info(f"Cámara inicializada con resolución: {actual_width}x{actual_height}")
-
-                    return cap
-                else:
-                    logger.warning(f"No se pudo abrir la cámara con índice {indice}")
-
-            except cv2.error as e:
-                logger.warning(f"Error de OpenCV al abrir la cámara {indice}: {e}")
-            except Exception as e:
-                logger.warning(f"Error inesperado al abrir la cámara {indice}: {e}")
-
-        # Si llegamos aquí, no se pudo abrir ninguna cámara
-        logger.error("No se pudo abrir ninguna cámara disponible")
-        return None
-
-    def _capture_loop(self) -> None:
-        """
-        Bucle principal del hilo de captura que constantemente lee frames de la cámara
-        y actualiza la cola con el frame más reciente.
-        """
-        ultima_captura = time.time()
-        periodo_frame = 1.0 / self.target_fps
-
-        while self.running and self.cap is not None:
-            try:
-                # Control de frecuencia para no saturar el CPU
-                tiempo_actual = time.time()
-                tiempo_transcurrido = tiempo_actual - ultima_captura
-
-                if tiempo_transcurrido < periodo_frame:
-                    # Esperar para mantener la frecuencia objetivo
-                    time.sleep(periodo_frame - tiempo_transcurrido)
-
-                # Capturar frame
-                ret, frame = self.cap.read()
-                ultima_captura = time.time()
-
-                if not ret or frame is None:
-                    logger.warning("No se pudo leer el fotograma de la cámara en el hilo de captura")
-                    time.sleep(0.01)  # Pequeña pausa antes de reintentar
-                    continue
-
-                # Voltear horizontalmente (efecto espejo)
-                frame = cv2.flip(frame, 1)
-
-                # Actualizar estadísticas
-                self.frames_procesados += 1
-                ahora = time.time()
-                if ahora - self.tiempo_ultimo_calculo_fps >= 1.0:
-                    self.fps_actual = self.frames_procesados / (ahora - self.tiempo_ultimo_calculo_fps)
-                    self.frames_procesados = 0
-                    self.tiempo_ultimo_calculo_fps = ahora
-
-                # Si la cola está llena, sacar el frame más antiguo
-                if self.frames_queue.full():
-                    try:
-                        self.frames_queue.get_nowait()
-                    except queue.Empty:
-                        pass  # La cola ya no está llena
-
-                # Poner el nuevo frame en la cola
-                self.frames_queue.put(frame, block=False)
-
-            except queue.Full:
-                # Si la cola está llena, simplemente continuamos
-                pass
-            except Exception as e:
-                logger.error(f"Error en el bucle de captura: {e}")
-                time.sleep(0.1)  # Pausa antes de reintentar
-
-    def obtener_frame(self, escala: float = 1.0) -> Tuple[bool, Optional[np.ndarray]]:
-        """
-        Obtiene el frame más reciente de la cola.
-
-        Args:
-            escala: Factor de escala para redimensionar el frame (1.0 = tamaño original).
-                   Valores menores mejoran el rendimiento.
-
-        Returns:
-            Tupla con (éxito, frame). Si no hay frames disponibles, éxito será False.
-        """
-        if not self.running or self.cap is None:
+        if self.cap is None or not self.cap.isOpened():
+            logger.warning("Se intentó leer de una cámara no inicializada")
             return False, None
 
-        try:
-            # Intentar obtener el frame más reciente sin bloquear
-            frame = self.frames_queue.get_nowait()
+        # Capturar frame
+        ret, frame = self.cap.read()
 
-            # Redimensionar si se solicita
-            if escala != 1.0 and frame is not None:
-                ancho = int(frame.shape[1] * escala)
-                alto = int(frame.shape[0] * escala)
-                frame = cv2.resize(frame, (ancho, alto), interpolation=cv2.INTER_AREA)
+        # Actualizar métricas
+        if ret:
+            self.frames_capturados += 1
+            self.tiempo_ultimo_frame = time.time()
 
-            return True, frame
+        return ret, frame
 
-        except queue.Empty:
-            # No hay frames disponibles
-            return False, None
-        except Exception as e:
-            logger.error(f"Error al obtener frame: {e}")
-            return False, None
-
-    def obtener_fps(self) -> float:
-        """
-        Obtiene los FPS actuales de captura.
-
-        Returns:
-            float: Frames por segundo actuales.
-        """
-        return self.fps_actual
-
-    def ajustar_parametros(self, parametros: Dict[str, Any]) -> bool:
-        """
-        Ajusta los parámetros de la cámara.
-
-        Args:
-            parametros: Diccionario con los parámetros a ajustar.
-
-        Returns:
-            bool: True si se aplicó al menos un parámetro correctamente.
-        """
-        if not self.running or self.cap is None:
-            return False
-
-        exito = False
-        # Mapa de nombres de parámetros a propiedades de OpenCV
-        param_map = {
-            'fps': cv2.CAP_PROP_FPS,
-            'exposicion': cv2.CAP_PROP_EXPOSURE,
-            'brillo': cv2.CAP_PROP_BRIGHTNESS,
-            'contraste': cv2.CAP_PROP_CONTRAST,
-            'saturation': cv2.CAP_PROP_SATURATION,
-            'buffer': cv2.CAP_PROP_BUFFERSIZE
-        }
-
-        for nombre, valor in parametros.items():
-            if nombre in param_map:
-                prop = param_map[nombre]
-                result = self.cap.set(prop, valor)
-                if result:
-                    logger.info(f"Parámetro '{nombre}' configurado a {valor}")
-                    exito = True
-                    # Actualizar el valor interno si es un parámetro que almacenamos
-                    if nombre == 'fps':
-                        self.target_fps = valor
-                    elif nombre == 'buffer':
-                        self.buffer_size = valor
-                else:
-                    logger.warning(f"No se pudo configurar el parámetro '{nombre}'")
-
-        return exito
-
-    def detener(self) -> None:
-        """
-        Detiene el hilo de captura y libera los recursos de la cámara.
-        """
-        self.running = False
-
-        # Esperar a que termine el hilo
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=1.0)
-
-        # Liberar la cámara
+    def release(self) -> None:
+        """Libera los recursos de la cámara."""
         if self.cap is not None:
             self.cap.release()
             self.cap = None
+            logger.info("Recursos de la cámara liberados")
 
-        logger.info("Sistema de captura asíncrona detenido correctamente")
+    def obtener_metricas(self) -> Dict[str, Any]:
+        """
+        Obtiene métricas de rendimiento de la captura.
+
+        Returns:
+            Diccionario con métricas de rendimiento.
+        """
+        tiempo_total = time.time() - self.tiempo_inicio
+        fps = self.frames_capturados / max(0.001, tiempo_total)
+
+        return {
+            "frames_capturados": self.frames_capturados,
+            "tiempo_total": tiempo_total,
+            "fps_promedio": fps,
+            "camara_index": self.camara_index,
+            "resolucion": f"{self.width}x{self.height}"
+        }
+
+    def __del__(self) -> None:
+        """Destructor para asegurar que se liberen los recursos."""
+        self.release()
+
+
+class CapturaVideoAsync(CapturaVideo):
+    """
+    Clase para captura de video asíncrona (en un hilo separado).
+
+    Esta implementación mejora el rendimiento al capturar frames
+    continuamente en un hilo separado, evitando el bloqueo
+    del hilo principal mientras se espera por un nuevo frame.
+    """
+
+    def __init__(self, camara_index: int = 0, width: int = 640,
+                height: int = 480, fps: int = 30,
+                buffer_size: int = 3) -> None:
+        """
+        Inicializa la captura de video asíncrona.
+
+        Args:
+            camara_index: Índice de la cámara a utilizar.
+            width: Ancho deseado para los frames.
+            height: Alto deseado para los frames.
+            fps: Frames por segundo objetivo para la captura.
+            buffer_size: Tamaño del buffer de frames.
+        """
+        super().__init__(camara_index, width, height)
+
+        # Configuración específica para captura asíncrona
+        self.fps_objetivo = fps
+        self.buffer_size = buffer_size
+
+        # Cola para almacenar frames capturados
+        self.queue = queue.Queue(maxsize=buffer_size)
+
+        # Variables para el hilo de captura
+        self.thread = None
+        self.stopped = False
+
+        # Métricas adicionales para captura asíncrona
+        self.frames_descartados = 0
+        self.tiempo_espera_promedio = 0.0
+
+        # Iniciar el hilo de captura
+        self.start()
+
+        logger.info(f"CapturaVideoAsync inicializada: cámara={camara_index}, "
+                  f"resolución={width}x{height}, fps={fps}, buffer={buffer_size}")
+
+    def start(self) -> None:
+        """Inicia el hilo de captura asíncrona."""
+        self.stopped = False
+        self.thread = threading.Thread(target=self._capturar, daemon=True)
+        self.thread.start()
+        logger.info("Hilo de captura asíncrona iniciado")
+
+    def _capturar(self) -> None:
+        """
+        Método de ejecución del hilo que captura frames continuamente.
+
+        Este método corre en un hilo separado y captura frames
+        constantemente para mantener el buffer actualizado.
+        """
+        intervalo_objetivo = 1.0 / self.fps_objetivo
+
+        while not self.stopped:
+            # Capturar frame
+            try:
+                if not self.cap.isOpened():
+                    logger.error("La cámara se cerró durante la captura asíncrona")
+                    self.stopped = True
+                    break
+
+                ret, frame = self.cap.read()
+
+                if not ret:
+                    logger.warning("Error al leer frame en captura asíncrona")
+                    time.sleep(0.1)  # Pequeña pausa antes de reintentar
+                    continue
+
+                # Actualizar métricas
+                self.frames_capturados += 1
+
+                # Si la cola está llena, quitar un frame antiguo para hacer espacio
+                if self.queue.full():
+                    try:
+                        self.queue.get_nowait()
+                        self.frames_descartados += 1
+                    except queue.Empty:
+                        pass
+
+                # Agregar el frame a la cola
+                try:
+                    self.queue.put(frame, block=False)
+                except queue.Full:
+                    self.frames_descartados += 1
+
+                # Intentar mantener la tasa de captura cercana al objetivo
+                # durmiendo un tiempo apropiado
+                tiempo_procesamiento = time.time() - self.tiempo_ultimo_frame
+                self.tiempo_ultimo_frame = time.time()
+
+                # Calcular tiempo de espera necesario para mantener FPS objetivo
+                tiempo_espera = max(0, intervalo_objetivo - tiempo_procesamiento)
+
+                if tiempo_espera > 0:
+                    time.sleep(tiempo_espera)
+
+            except Exception as e:
+                logger.error(f"Error en hilo de captura: {e}")
+                time.sleep(0.1)  # Pausa antes de reintentar
+
+    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
+        """
+        Lee un frame del buffer de captura.
+
+        Returns:
+            Tupla con (éxito, frame).
+        """
+        if self.stopped or not self.thread.is_alive():
+            return False, None
+
+        try:
+            # Intentar obtener el frame más reciente
+            frame = self.queue.get(timeout=1.0)
+            return True, frame
+        except queue.Empty:
+            logger.warning("Timeout al esperar por un frame en la cola")
+            return False, None
+        except Exception as e:
+            logger.error(f"Error al leer frame de la cola: {e}")
+            return False, None
+
+    def stop(self) -> None:
+        """Detiene el hilo de captura asíncrona."""
+        self.stopped = True
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        logger.info("Hilo de captura asíncrona detenido")
+
+    def release(self) -> None:
+        """Libera los recursos (cámara y hilo)."""
+        self.stop()
+        super().release()
+
+        # Limpiar la cola
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def obtener_metricas(self) -> Dict[str, Any]:
+        """
+        Obtiene métricas de rendimiento de la captura asíncrona.
+
+        Returns:
+            Diccionario con métricas de rendimiento extendidas.
+        """
+        metricas_base = super().obtener_metricas()
+
+        # Añadir métricas específicas de captura asíncrona
+        metricas_adicionales = {
+            "frames_descartados": self.frames_descartados,
+            "tamaño_cola_actual": self.queue.qsize(),
+            "tamaño_buffer": self.buffer_size,
+            "fps_objetivo": self.fps_objetivo,
+            "es_asincrono": True
+        }
+
+        # Combinar métricas
+        metricas_base.update(metricas_adicionales)
+        return metricas_base
+
+    def __del__(self) -> None:
+        """Destructor para asegurar la liberación de recursos."""
+        self.release()
 
 # Mantener las funciones originales para compatibilidad
 def inicializar_camara() -> cv2.VideoCapture:

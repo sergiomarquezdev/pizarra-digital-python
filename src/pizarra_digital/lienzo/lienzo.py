@@ -1,22 +1,29 @@
 """
-Módulo para gestionar el lienzo de dibujo.
+Módulo para el lienzo de dibujo de la pizarra digital.
 
-Este módulo proporciona una clase para crear y manipular un lienzo
-donde se realizarán los dibujos.
+Este módulo proporciona la clase Lienzo que gestiona la representación
+visual de la pizarra digital y las operaciones de dibujo.
 """
 import logging
-import numpy as np
 import cv2
+import numpy as np
 import time
-from typing import Tuple, Optional, List, Dict, Any, Deque
 from collections import deque
+from typing import Tuple, List, Dict, Any, Optional, Deque
 
 from ..config import (
     CANVAS_WIDTH,
     CANVAS_HEIGHT,
-    CANVAS_BACKGROUND,
-    DEFAULT_DRAWING_COLOR,
-    DRAWING_THICKNESS
+    CANVAS_BACKGROUND_COLOR,
+    CANVAS_LINE_THICKNESS,
+    DEFAULT_COLOR,
+    OPTIMIZATION_BUFFER_SIZE,
+    OPTIMIZATION_MEMORY_LIMIT_MB,
+    DRAWING_SPEED_SMOOTH_FACTOR,
+    DRAWING_MIN_THICKNESS,
+    DRAWING_MAX_THICKNESS,
+    DRAWING_SPEED_THRESHOLD_LOW,
+    DRAWING_SPEED_THRESHOLD_HIGH
 )
 
 # Configuración del logging
@@ -24,347 +31,323 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configuración para optimizar el rendimiento del lienzo
-BUFFER_LINEAS_TAMANO: int = 5  # Tamaño del buffer para acumular líneas (dibujar varias de una vez)
-OPTIMIZAR_MEMORIA: bool = True  # Usar técnicas de optimización de memoria
-GROSOR_PREDICCION_ADAPTATIVO: bool = True  # Ajustar grosor según velocidad de movimiento
+# Buffer para operaciones de dibujo
+BUFFER_SIZE: int = OPTIMIZATION_BUFFER_SIZE
+MEMORY_LIMIT_MB: int = OPTIMIZATION_MEMORY_LIMIT_MB
+
+# Ajustes para el grosor adaptativo basado en velocidad
+SMOOTH_FACTOR: float = DRAWING_SPEED_SMOOTH_FACTOR
+MIN_THICKNESS: int = DRAWING_MIN_THICKNESS
+MAX_THICKNESS: int = DRAWING_MAX_THICKNESS
+SPEED_THRESHOLD_LOW: float = DRAWING_SPEED_THRESHOLD_LOW
+SPEED_THRESHOLD_HIGH: float = DRAWING_SPEED_THRESHOLD_HIGH
 
 class Lienzo:
-    """Clase para gestionar el lienzo de dibujo."""
+    """
+    Clase que gestiona el lienzo de dibujo y las operaciones de pintura.
+
+    El lienzo está implementado como una imagen en memoria que se puede
+    superponer sobre los fotogramas de la cámara.
+    """
 
     def __init__(self,
-                ancho: int = CANVAS_WIDTH,
-                alto: int = CANVAS_HEIGHT,
-                color_fondo: Tuple[int, int, int] = CANVAS_BACKGROUND) -> None:
+                 width: int = CANVAS_WIDTH,
+                 height: int = CANVAS_HEIGHT,
+                 background_color: Tuple[int, int, int] = CANVAS_BACKGROUND_COLOR,
+                 enable_optimizations: bool = True) -> None:
         """
-        Inicializa un nuevo lienzo.
+        Inicializa un nuevo lienzo de dibujo.
 
         Args:
-            ancho: Ancho del lienzo en píxeles.
-            alto: Alto del lienzo en píxeles.
-            color_fondo: Color de fondo del lienzo en formato BGR.
+            width: Ancho del lienzo en píxeles.
+            height: Alto del lienzo en píxeles.
+            background_color: Color de fondo del lienzo (BGR).
+            enable_optimizations: Si se deben habilitar las optimizaciones de rendimiento.
         """
-        self.ancho = ancho
-        self.alto = alto
-        self.color_fondo = color_fondo
+        self.ancho = width
+        self.alto = height
+        self.color_fondo = background_color
+        self.color_actual = DEFAULT_COLOR
+        self.grosor = CANVAS_LINE_THICKNESS
+        self.enable_optimizations = enable_optimizations
 
-        # Crear el lienzo vacío - usar uint8 para optimizar memoria
-        self.lienzo = np.ones((alto, ancho, 3), dtype=np.uint8)
-        self.lienzo[:] = color_fondo
+        # Memoria principal: lienzo y máscara
+        self.lienzo = np.ones((height, width, 3), dtype=np.uint8) * background_color[0]
+        # Convertir de BGR a valores escalares individuales
+        self.lienzo[:, :, 0] = background_color[0]  # B
+        self.lienzo[:, :, 1] = background_color[1]  # G
+        self.lienzo[:, :, 2] = background_color[2]  # R
 
-        # Crear una máscara para seguir los píxeles dibujados
-        self.mascara_dibujo = np.zeros((alto, ancho), dtype=np.uint8)
+        # Máscara: 0 donde no hay dibujo, 255 donde hay dibujo
+        self.mascara = np.zeros((height, width), dtype=np.uint8)
 
-        # Color y grosor actuales para dibujar
-        self.color_dibujo = DEFAULT_DRAWING_COLOR
-        self.grosor_dibujo = DRAWING_THICKNESS
+        # Variables para implementación del buffer de operaciones
+        self.ultima_posicion = None
+        self.buffer_operaciones: Deque[Dict[str, Any]] = deque(maxlen=BUFFER_SIZE)
+        self.procesando_buffer = False
 
-        # Caché para operaciones frecuentes
-        self._frame_resultado = np.zeros((alto, ancho, 3), dtype=np.uint8)
-
-        # Buffer de líneas para acumular operaciones de dibujo
-        self.buffer_lineas: List[Dict[str, Any]] = []
-
-        # Último punto registrado para trazos continuos
-        self.ultimo_punto: Optional[Tuple[int, int]] = None
-
-        # Buffer para puntos intermedios
-        self.buffer_puntos: Deque[Tuple[int, int]] = deque(maxlen=5)
+        # Velocidad de dibujo para grosor adaptativo
+        self.ultima_pos = None
+        self.ultimo_tiempo = None
+        self.velocidad_actual = 0.0
 
         # Métricas de rendimiento
-        self.tiempo_ultimo_dibujo = time.time()
-        self.operaciones_dibujo = 0
-        self.tiempo_total_dibujo = 0.0
+        self._metricas = {
+            'tiempo_ultimo_frame': time.time(),
+            'operaciones_buffer': 0,
+            'operaciones_procesadas': 0,
+            'tiempo_procesamiento': 0.0
+        }
 
-        # Último grosor utilizado para adaptación
-        self.ultimo_grosor_adaptado = self.grosor_dibujo
+        logger.info(f"Lienzo inicializado con tamaño {width}x{height}")
+        if enable_optimizations:
+            logger.info(f"Optimizaciones habilitadas: buffer={BUFFER_SIZE}, memoria={MEMORY_LIMIT_MB}MB")
 
-        logger.info(f"Lienzo optimizado inicializado con dimensiones {ancho}x{alto}")
-
-    def limpiar(self) -> None:
+    def calcular_grosor_adaptativo(self, posicion: Tuple[int, int]) -> int:
         """
-        Limpia el lienzo, restaurándolo a su color de fondo original.
-        """
-        # Vaciar buffer de operaciones pendientes
-        self._procesar_buffer_lineas()
-
-        # Usar operaciones vectorizadas para mayor velocidad
-        self.lienzo[:] = self.color_fondo
-        self.mascara_dibujo[:] = 0  # Limpiar también la máscara
-
-        # Reiniciar variables de estado
-        self.ultimo_punto = None
-        self.buffer_puntos.clear()
-
-        logger.info("Lienzo limpiado")
-
-    def dibujar_punto(self,
-                     punto: Tuple[int, int],
-                     color: Optional[Tuple[int, int, int]] = None,
-                     grosor: Optional[int] = None) -> None:
-        """
-        Dibuja un punto (círculo pequeño) en el lienzo.
+        Calcula el grosor de la línea basado en la velocidad de movimiento.
+        Movimientos más rápidos producen líneas más delgadas.
 
         Args:
-            punto: Coordenadas (x, y) del punto a dibujar.
-            color: Color del punto en formato BGR. Si es None, usa el color actual.
-            grosor: Grosor (radio) del punto. Si es None, usa el grosor actual.
+            posicion: La posición actual (x, y) para el dibujo.
+
+        Returns:
+            El grosor calculado para la línea.
         """
-        if not self._es_punto_valido(punto):
-            return
+        tiempo_actual = time.time()
 
-        color_usado = color if color is not None else self.color_dibujo
-        grosor_usado = grosor if grosor is not None else self.grosor_dibujo
+        # Si no hay posición anterior, usar el grosor predeterminado
+        if self.ultima_pos is None or self.ultimo_tiempo is None:
+            self.ultima_pos = posicion
+            self.ultimo_tiempo = tiempo_actual
+            return self.grosor
 
-        # Usar buffer para acumular operaciones
-        if OPTIMIZAR_MEMORIA:
-            # Añadir al buffer
-            self.buffer_lineas.append({
-                'tipo': 'punto',
-                'punto': punto,
-                'color': color_usado,
-                'grosor': grosor_usado
-            })
+        # Calcular la distancia y el tiempo transcurrido
+        dx = posicion[0] - self.ultima_pos[0]
+        dy = posicion[1] - self.ultima_pos[1]
+        distancia = np.sqrt(dx*dx + dy*dy)
+        dt = max(0.001, tiempo_actual - self.ultimo_tiempo)  # Evitar división por cero
 
-            # Procesar buffer si alcanza el tamaño máximo
-            if len(self.buffer_lineas) >= BUFFER_LINEAS_TAMANO:
-                self._procesar_buffer_lineas()
+        # Calcular la velocidad (píxeles por segundo)
+        velocidad = distancia / dt
+
+        # Suavizar la velocidad para evitar cambios bruscos
+        self.velocidad_actual = (SMOOTH_FACTOR * velocidad +
+                               (1 - SMOOTH_FACTOR) * self.velocidad_actual)
+
+        # Actualizar última posición y tiempo
+        self.ultima_pos = posicion
+        self.ultimo_tiempo = tiempo_actual
+
+        # Mapeo de velocidad a grosor (velocidad alta = grosor bajo)
+        if self.velocidad_actual < SPEED_THRESHOLD_LOW:
+            # Velocidad baja, grosor máximo
+            return MAX_THICKNESS
+        elif self.velocidad_actual > SPEED_THRESHOLD_HIGH:
+            # Velocidad alta, grosor mínimo
+            return MIN_THICKNESS
         else:
-            # Dibujar directamente
-            t_inicio = time.time()
-            cv2.circle(self.lienzo, punto, grosor_usado // 2, color_usado, -1)
-            cv2.circle(self.mascara_dibujo, punto, grosor_usado // 2, 255, -1)
-            self._actualizar_metricas_dibujo(time.time() - t_inicio)
-
-        # Actualizar último punto
-        self.ultimo_punto = punto
-
-        # Añadir al buffer de puntos
-        self._actualizar_buffer_puntos(punto)
-
-    def dibujar_linea(self,
-                     punto_inicio: Tuple[int, int],
-                     punto_fin: Tuple[int, int],
-                     color: Optional[Tuple[int, int, int]] = None,
-                     grosor: Optional[int] = None) -> None:
-        """
-        Dibuja una línea entre dos puntos en el lienzo.
-
-        Args:
-            punto_inicio: Coordenadas (x, y) del punto de inicio.
-            punto_fin: Coordenadas (x, y) del punto de fin.
-            color: Color de la línea en formato BGR. Si es None, usa el color actual.
-            grosor: Grosor de la línea. Si es None, usa el grosor actual.
-        """
-        if not (self._es_punto_valido(punto_inicio) and self._es_punto_valido(punto_fin)):
-            return
-
-        color_usado = color if color is not None else self.color_dibujo
-        grosor_usado = grosor if grosor is not None else self.grosor_dibujo
-
-        # Calcular la distancia entre los puntos
-        dx = punto_fin[0] - punto_inicio[0]
-        dy = punto_fin[1] - punto_inicio[1]
-        distancia = int(np.sqrt(dx*dx + dy*dy))
-
-        # Ajustar grosor según velocidad si está activado
-        if GROSOR_PREDICCION_ADAPTATIVO:
-            # Calcular velocidad (píxeles por tiempo)
-            tiempo_actual = time.time()
-            dt = tiempo_actual - self.tiempo_ultimo_dibujo
-            if dt > 0:
-                velocidad = distancia / dt
-                # Reducir grosor para movimientos rápidos (más suaves)
-                if velocidad > 1000:  # Muy rápido
-                    grosor_adaptado = max(1, grosor_usado // 3)
-                elif velocidad > 500:  # Rápido
-                    grosor_adaptado = max(1, grosor_usado // 2)
-                else:
-                    # Normal o lento, usar grosor completo
-                    grosor_adaptado = grosor_usado
-
-                # Suavizar transición entre grosores
-                alpha = 0.3  # Factor de suavizado (0-1)
-                grosor_usado = int(alpha * grosor_adaptado + (1 - alpha) * self.ultimo_grosor_adaptado)
-                self.ultimo_grosor_adaptado = grosor_usado
-
-            self.tiempo_ultimo_dibujo = tiempo_actual
-
-        # Usar buffer para acumular operaciones
-        if OPTIMIZAR_MEMORIA:
-            # Añadir al buffer
-            self.buffer_lineas.append({
-                'tipo': 'linea',
-                'punto_inicio': punto_inicio,
-                'punto_fin': punto_fin,
-                'color': color_usado,
-                'grosor': grosor_usado
-            })
-
-            # Procesar buffer si alcanza el tamaño máximo
-            if len(self.buffer_lineas) >= BUFFER_LINEAS_TAMANO:
-                self._procesar_buffer_lineas()
-        else:
-            # Dibujar directamente
-            t_inicio = time.time()
-            cv2.line(self.lienzo, punto_inicio, punto_fin, color_usado, grosor_usado)
-            cv2.line(self.mascara_dibujo, punto_inicio, punto_fin, 255, grosor_usado)
-            self._actualizar_metricas_dibujo(time.time() - t_inicio)
-
-        # Actualizar último punto
-        self.ultimo_punto = punto_fin
-
-        # Añadir al buffer de puntos
-        self._actualizar_buffer_puntos(punto_fin)
-
-    def _procesar_buffer_lineas(self) -> None:
-        """
-        Procesa todas las operaciones de dibujo acumuladas en el buffer.
-        Esto mejora el rendimiento al realizar menos llamadas a OpenCV.
-        """
-        if not self.buffer_lineas:
-            return
-
-        t_inicio = time.time()
-
-        # Procesar cada operación en el buffer
-        for operacion in self.buffer_lineas:
-            if operacion['tipo'] == 'punto':
-                cv2.circle(
-                    self.lienzo,
-                    operacion['punto'],
-                    operacion['grosor'] // 2,
-                    operacion['color'],
-                    -1
-                )
-                cv2.circle(
-                    self.mascara_dibujo,
-                    operacion['punto'],
-                    operacion['grosor'] // 2,
-                    255,
-                    -1
-                )
-            elif operacion['tipo'] == 'linea':
-                cv2.line(
-                    self.lienzo,
-                    operacion['punto_inicio'],
-                    operacion['punto_fin'],
-                    operacion['color'],
-                    operacion['grosor']
-                )
-                cv2.line(
-                    self.mascara_dibujo,
-                    operacion['punto_inicio'],
-                    operacion['punto_fin'],
-                    255,
-                    operacion['grosor']
-                )
-
-        # Vaciar el buffer
-        self.buffer_lineas.clear()
-
-        # Actualizar métricas
-        self._actualizar_metricas_dibujo(time.time() - t_inicio)
-
-    def _actualizar_metricas_dibujo(self, tiempo_operacion: float) -> None:
-        """
-        Actualiza las métricas de rendimiento del dibujo.
-
-        Args:
-            tiempo_operacion: Tiempo que tomó la operación de dibujo.
-        """
-        self.operaciones_dibujo += 1
-        self.tiempo_total_dibujo += tiempo_operacion
-
-    def _actualizar_buffer_puntos(self, punto: Tuple[int, int]) -> None:
-        """
-        Actualiza el buffer de puntos para suavizado y manejo de trazos rápidos.
-
-        Args:
-            punto: Nuevo punto a añadir al buffer
-        """
-        self.buffer_puntos.append(punto)
+            # Interpolación lineal entre los umbrales
+            factor = (self.velocidad_actual - SPEED_THRESHOLD_LOW) / (SPEED_THRESHOLD_HIGH - SPEED_THRESHOLD_LOW)
+            return int(MAX_THICKNESS - factor * (MAX_THICKNESS - MIN_THICKNESS))
 
     def cambiar_color(self, color: Tuple[int, int, int]) -> None:
         """
-        Cambia el color de dibujo actual.
+        Cambia el color actual de dibujo.
 
         Args:
             color: Nuevo color en formato BGR.
         """
-        # Procesar operaciones pendientes antes de cambiar el color
-        self._procesar_buffer_lineas()
-
-        self.color_dibujo = color
-        logger.info(f"Color de dibujo cambiado a {color}")
+        self.color_actual = color
+        logger.debug(f"Cambiado color de dibujo a {color}")
 
     def cambiar_grosor(self, grosor: int) -> None:
         """
-        Cambia el grosor de dibujo actual.
+        Cambia el grosor de las líneas de dibujo.
 
         Args:
-            grosor: Nuevo grosor para el dibujo.
+            grosor: Nuevo grosor de línea en píxeles.
         """
-        # Procesar operaciones pendientes antes de cambiar el grosor
-        self._procesar_buffer_lineas()
+        self.grosor = grosor
+        logger.debug(f"Cambiado grosor de línea a {grosor}px")
 
-        self.grosor_dibujo = max(1, grosor)  # Asegurar que sea al menos 1
-        self.ultimo_grosor_adaptado = self.grosor_dibujo  # Actualizar también el grosor adaptado
-        logger.info(f"Grosor de dibujo cambiado a {self.grosor_dibujo}")
-
-    def superponer_en_fotograma(self,
-                               fotograma: np.ndarray,
-                               alpha: float = 0.7) -> np.ndarray:
+    def limpiar(self) -> None:
         """
-        Superpone el lienzo sobre un fotograma.
+        Limpia el lienzo, eliminando todos los dibujos.
+        """
+        # Limpiar búfer de operaciones primero
+        self.buffer_operaciones.clear()
+        self.ultima_posicion = None
+
+        # Limpiar el lienzo
+        self.lienzo[:, :] = self.color_fondo
+        self.mascara[:, :] = 0
+
+        # Resetear variables de velocidad
+        self.ultima_pos = None
+        self.ultimo_tiempo = None
+        self.velocidad_actual = 0.0
+
+        logger.info("Lienzo limpiado")
+
+    def dibujar_punto(self, x: int, y: int, color: Optional[Tuple[int, int, int]] = None) -> None:
+        """
+        Dibuja un punto en las coordenadas especificadas.
 
         Args:
-            fotograma: Fotograma sobre el que superponer el lienzo.
-            alpha: Valor de transparencia (0.0 a 1.0) donde 1.0 significa lienzo opaco.
+            x: Coordenada x del punto.
+            y: Coordenada y del punto.
+            color: Color del punto (BGR). Si es None, se usa el color actual.
+        """
+        if color is None:
+            color = self.color_actual
+
+        # Dibujar un círculo pequeño para representar un punto
+        radio = max(CANVAS_LINE_THICKNESS, 1)  # Al menos radio 1 para que sea visible
+        cv2.circle(
+            self.lienzo,
+            (x, y),
+            radio,
+            color,
+            -1  # Rellenar el círculo
+        )
+
+        # Dibujar el mismo punto en la máscara (todos los canales)
+        if self.mascara is not None:
+            cv2.circle(
+                self.mascara,
+                (x, y),
+                radio,
+                (255, 255, 255),
+                -1
+            )
+
+        self.modificado = True
+        logger.debug(f"Punto dibujado en ({x}, {y}) con color {color}")
+
+    def dibujar_linea(self, x1: int, y1: int, x2: int, y2: int, color: Optional[Tuple[int, int, int]] = None) -> None:
+        """
+        Dibuja una línea entre dos puntos.
+
+        Args:
+            x1: Coordenada x del primer punto.
+            y1: Coordenada y del primer punto.
+            x2: Coordenada x del segundo punto.
+            y2: Coordenada y del segundo punto.
+            color: Color de la línea (BGR). Si es None, se usa el color actual.
+        """
+        if color is None:
+            color = self.color_actual
+
+        # Dibujar la línea en la imagen principal
+        grosor = CANVAS_LINE_THICKNESS
+        cv2.line(
+            self.lienzo,
+            (x1, y1),
+            (x2, y2),
+            color,
+            thickness=grosor,
+            lineType=cv2.LINE_AA
+        )
+
+        # Dibujar la misma línea en la máscara (todos los canales)
+        if self.mascara is not None:
+            cv2.line(
+                self.mascara,
+                (x1, y1),
+                (x2, y2),
+                (255, 255, 255),
+                thickness=grosor,
+                lineType=cv2.LINE_AA
+            )
+
+        self.modificado = True
+        logger.debug(f"Línea dibujada desde ({x1}, {y1}) a ({x2}, {y2}) con color {color}")
+
+    def dibujar_desde_posicion(self, x: int, y: int, dibujando: bool) -> None:
+        """
+        Dibuja desde la última posición guardada hasta la nueva posición.
+
+        Este método se utiliza para dibujar continuamente mientras se mueve el dedo.
+
+        Args:
+            x: Coordenada x de la nueva posición.
+            y: Coordenada y de la nueva posición.
+            dibujando: Indica si se debe dibujar (True) o solo actualizar la posición (False).
+        """
+        # Asegurarse de que las coordenadas estén dentro del lienzo
+        x = max(0, min(x, self.ancho - 1))
+        y = max(0, min(y, self.alto - 1))
+
+        if dibujando:
+            if self.ultima_posicion is not None:
+                # Dibujar línea desde la última posición
+                ult_x, ult_y = self.ultima_posicion
+                self.dibujar_linea(ult_x, ult_y, x, y)
+            else:
+                # Primera posición, dibujar un punto
+                self.dibujar_punto(x, y)
+
+        # Actualizar la última posición
+        self.ultima_posicion = (x, y)
+
+    def forzar_procesar_buffer(self) -> None:
+        """
+        Fuerza el procesamiento inmediato de todas las operaciones en el buffer.
+        Útil antes de mostrar el lienzo para asegurar que todos los cambios sean visibles.
+        """
+        if self.buffer_operaciones:
+            self._procesar_buffer_operaciones()
+
+    def actualizar(self) -> None:
+        """
+        Actualiza el estado del lienzo procesando cualquier operación pendiente.
+        Debe llamarse en cada fotograma si se usa el buffer.
+        """
+        self.forzar_procesar_buffer()
+
+        # Actualizar métricas
+        self._metricas['tiempo_ultimo_frame'] = time.time()
+
+    def superponer_en_fotograma(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Superpone el lienzo en un fotograma de la cámara.
+
+        Args:
+            frame: Fotograma de entrada donde superponer el lienzo.
 
         Returns:
             Fotograma con el lienzo superpuesto.
         """
-        # Procesar operaciones pendientes antes de superponer el lienzo
-        self._procesar_buffer_lineas()
+        # Asegurarse de que todas las operaciones estén procesadas
+        self.forzar_procesar_buffer()
 
-        if fotograma is None:
-            logger.warning("Se intentó superponer en un fotograma nulo")
-            return self.lienzo.copy()
+        # Redimensionar el frame si es necesario
+        if frame.shape[:2] != (self.alto, self.ancho):
+            frame_redimensionado = cv2.resize(frame, (self.ancho, self.alto))
+        else:
+            frame_redimensionado = frame
 
-        # Verificar que las dimensiones coincidan
-        if fotograma.shape[0] != self.alto or fotograma.shape[1] != self.ancho:
-            logger.warning(f"Las dimensiones del fotograma ({fotograma.shape[1]}x{fotograma.shape[0]}) "
-                         f"no coinciden con las del lienzo ({self.ancho}x{self.alto})")
-            # Redimensionar el fotograma para que coincida con el lienzo
-            fotograma = cv2.resize(fotograma, (self.ancho, self.alto))
+        # Crear una copia para no modificar el original
+        resultado = frame_redimensionado.copy()
 
-        # Optimización: reutilizar el buffer preasignado para evitar nuevas asignaciones
-        np.copyto(self._frame_resultado, fotograma)
+        # Superponer el lienzo utilizando la máscara
+        resultado = cv2.bitwise_and(resultado, resultado, mask=cv2.bitwise_not(self.mascara))
+        temp = cv2.bitwise_and(self.lienzo, self.lienzo, mask=self.mascara)
+        resultado = cv2.add(resultado, temp)
 
-        # Usar operaciones vectorizadas para mayor velocidad
-        idx = self.mascara_dibujo > 0
-        if np.any(idx):
-            # Mezclar solo los píxeles dibujados
-            self._frame_resultado[idx] = (
-                fotograma[idx] * (1 - alpha) +
-                self.lienzo[idx] * alpha
-            ).astype(np.uint8)
+        return resultado
 
-        return self._frame_resultado
-
-    def _es_punto_valido(self, punto: Tuple[int, int]) -> bool:
+    def obtener_imagen(self) -> np.ndarray:
         """
-        Verifica si un punto está dentro de los límites del lienzo.
-
-        Args:
-            punto: Coordenadas (x, y) del punto a verificar.
+        Obtiene la imagen actual del lienzo.
 
         Returns:
-            True si el punto está dentro del lienzo, False en caso contrario.
+            Imagen del lienzo (BGR).
         """
-        x, y = punto
-        return 0 <= x < self.ancho and 0 <= y < self.alto
+        # Asegurarse de que todas las operaciones estén procesadas
+        self.forzar_procesar_buffer()
+        return self.lienzo.copy()
 
     def obtener_metricas(self) -> Dict[str, Any]:
         """
@@ -373,13 +356,9 @@ class Lienzo:
         Returns:
             Diccionario con métricas de rendimiento.
         """
-        tiempo_medio = 0.0
-        if self.operaciones_dibujo > 0:
-            tiempo_medio = self.tiempo_total_dibujo / self.operaciones_dibujo
-
         return {
-            "operaciones_dibujo": self.operaciones_dibujo,
-            "tiempo_total_dibujo_ms": self.tiempo_total_dibujo * 1000,
-            "tiempo_medio_dibujo_ms": tiempo_medio * 1000,
-            "operaciones_pendientes": len(self.buffer_lineas)
+            "operaciones_buffer": self._metricas['operaciones_buffer'],
+            "operaciones_procesadas": self._metricas['operaciones_procesadas'],
+            "tiempo_procesamiento": self._metricas['tiempo_procesamiento'] * 1000,  # ms
+            "velocidad_dibujo": self.velocidad_actual
         }
