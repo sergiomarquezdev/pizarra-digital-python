@@ -11,7 +11,7 @@ import logging
 import time
 import cv2
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 
 from .config import (
     CAMERA_WIDTH,
@@ -23,7 +23,7 @@ from .config import (
     EXIT_KEY,
     DEFAULT_DRAWING_COLOR
 )
-from .captura.captura import inicializar_camara, leer_fotograma, liberar_camara, CameraError
+from .captura.captura import inicializar_camara, leer_fotograma, liberar_camara, ajustar_parametros_camara, CameraError
 from .deteccion.deteccion import DetectorManos
 from .lienzo.lienzo import Lienzo
 from .dibujo.dibujo import DibujoMano
@@ -33,6 +33,11 @@ from .interfaz.interfaz import InterfazUsuario
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Parámetros de rendimiento
+ESCALA_CAMARA: float = 1.0  # Factor de escala para la cámara (1.0 = tamaño completo)
+MOSTRAR_FPS: bool = True  # Mostrar contador de FPS
+OPTIMIZAR_RENDIMIENTO: bool = True  # Aplicar optimizaciones automáticas
 
 def calcular_fps(tiempo_inicio: float, num_frames: int = 10) -> float:
     """
@@ -72,6 +77,35 @@ def mostrar_fps(frame: np.ndarray, fps: float) -> np.ndarray:
 
     return frame
 
+def optimizar_rendimiento_automatico(fps: float, detector: DetectorManos, escala_actual: float) -> Tuple[bool, float]:
+    """
+    Ajusta dinámicamente los parámetros para optimizar el rendimiento.
+
+    Args:
+        fps: FPS actuales
+        detector: Instancia del detector de manos
+        escala_actual: Factor de escala actual de la cámara
+
+    Returns:
+        Tupla con (cambios_aplicados, nueva_escala)
+    """
+    cambios_aplicados = False
+    nueva_escala = escala_actual
+
+    # Si los FPS bajan demasiado, reducir la resolución
+    if fps < 15 and escala_actual > 0.5:
+        nueva_escala = max(0.5, escala_actual - 0.1)
+        logger.info(f"FPS bajos ({fps:.1f}), reduciendo escala a {nueva_escala:.1f}")
+        cambios_aplicados = True
+
+    # Si los FPS son buenos, aumentar gradualmente la resolución
+    elif fps > 25 and escala_actual < 1.0:
+        nueva_escala = min(1.0, escala_actual + 0.05)
+        logger.info(f"FPS buenos ({fps:.1f}), aumentando escala a {nueva_escala:.1f}")
+        cambios_aplicados = True
+
+    return cambios_aplicados, nueva_escala
+
 def inicializar_app() -> Tuple[Optional[cv2.VideoCapture], DetectorManos, Lienzo, DibujoMano, InterfazUsuario]:
     """
     Inicializa todos los componentes de la aplicación.
@@ -83,6 +117,15 @@ def inicializar_app() -> Tuple[Optional[cv2.VideoCapture], DetectorManos, Lienzo
         # Inicializar la cámara
         logger.info("Inicializando la cámara...")
         camara = inicializar_camara()
+
+        # Configurar parámetros para mejor rendimiento
+        if OPTIMIZAR_RENDIMIENTO:
+            parametros_optimizados = {
+                'fps': 30,
+                'buffer': 1,
+                'exposicion': -3,  # Menor exposición puede mejorar la velocidad
+            }
+            ajustar_parametros_camara(camara, parametros_optimizados)
 
         # Inicializar el detector de manos
         logger.info("Inicializando el detector de manos...")
@@ -145,12 +188,29 @@ def ejecutar_app() -> None:
     tiempo_inicio_fps = time.time()
     fps = 0.0
 
+    # Control de escala para ajuste de rendimiento
+    escala_actual = ESCALA_CAMARA
+    tiempo_ultimo_ajuste = time.time()
+
+    # Medición de tiempos para diagnóstico
+    tiempos_operaciones: Dict[str, float] = {
+        'camara': 0.0,
+        'detector': 0.0,
+        'dibujo': 0.0,
+        'lienzo': 0.0,
+        'interfaz': 0.0
+    }
+
     try:
         # Bucle principal
         logger.info("Iniciando bucle principal de la aplicación...")
         while True:
+            t_inicio_total = time.time()
+
             # Capturar fotograma
-            ret, frame = leer_fotograma(camara)
+            t_inicio = time.time()
+            ret, frame = leer_fotograma(camara, escala=escala_actual)
+            tiempos_operaciones['camara'] = time.time() - t_inicio
 
             if not ret or frame is None:
                 logger.warning("No se pudo leer el fotograma de la cámara")
@@ -163,21 +223,46 @@ def ejecutar_app() -> None:
                 contador_frames = 0
                 tiempo_inicio_fps = time.time()
 
+                # Optimizar rendimiento si está habilitado
+                if OPTIMIZAR_RENDIMIENTO and time.time() - tiempo_ultimo_ajuste > 2.0:
+                    cambios, nueva_escala = optimizar_rendimiento_automatico(fps, detector, escala_actual)
+                    if cambios:
+                        escala_actual = nueva_escala
+                        tiempo_ultimo_ajuste = time.time()
+
             # Procesar fotograma para detectar manos
+            t_inicio = time.time()
             frame_procesado, manos_detectadas = detector.procesar_fotograma(frame, dibujar_landmarks=True)
+            tiempos_operaciones['detector'] = time.time() - t_inicio
 
             # Procesar la primera mano detectada (si hay alguna)
+            t_inicio = time.time()
             if manos_detectadas:
                 dibujo.procesar_mano(manos_detectadas[0], detector)
+            tiempos_operaciones['dibujo'] = time.time() - t_inicio
 
             # Superponer el lienzo en el fotograma
+            t_inicio = time.time()
             frame_con_lienzo = lienzo.superponer_en_fotograma(frame_procesado)
+            tiempos_operaciones['lienzo'] = time.time() - t_inicio
 
             # Dibujar la interfaz de usuario
+            t_inicio = time.time()
             frame_final = interfaz.dibujar(frame_con_lienzo)
+            tiempos_operaciones['interfaz'] = time.time() - t_inicio
 
             # Mostrar FPS
-            mostrar_fps(frame_final, fps)
+            if MOSTRAR_FPS:
+                mostrar_fps(frame_final, fps)
+
+                # Para diagnóstico, registrar ocasionalmente los tiempos de las operaciones
+                if contador_frames == 0:
+                    logger.debug(f"Tiempos (ms): "
+                                f"cámara={tiempos_operaciones['camara']*1000:.1f}, "
+                                f"detector={tiempos_operaciones['detector']*1000:.1f}, "
+                                f"dibujo={tiempos_operaciones['dibujo']*1000:.1f}, "
+                                f"lienzo={tiempos_operaciones['lienzo']*1000:.1f}, "
+                                f"interfaz={tiempos_operaciones['interfaz']*1000:.1f}")
 
             # Mostrar el fotograma resultante
             cv2.imshow(APP_NAME, frame_final)

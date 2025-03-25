@@ -7,7 +7,7 @@ donde se realizarán los dibujos.
 import logging
 import numpy as np
 import cv2
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 from ..config import (
     CANVAS_WIDTH,
@@ -41,13 +41,26 @@ class Lienzo:
         self.alto = alto
         self.color_fondo = color_fondo
 
-        # Crear el lienzo vacío
+        # Crear el lienzo vacío - usar uint8 para optimizar memoria
         self.lienzo = np.ones((alto, ancho, 3), dtype=np.uint8)
         self.lienzo[:] = color_fondo
+
+        # Crear una máscara para seguir los píxeles dibujados
+        self.mascara_dibujo = np.zeros((alto, ancho), dtype=np.uint8)
 
         # Color y grosor actuales para dibujar
         self.color_dibujo = DEFAULT_DRAWING_COLOR
         self.grosor_dibujo = DRAWING_THICKNESS
+
+        # Caché para operaciones frecuentes
+        self._frame_resultado = np.zeros((alto, ancho, 3), dtype=np.uint8)
+
+        # Último punto registrado para trazos continuos
+        self.ultimo_punto: Optional[Tuple[int, int]] = None
+
+        # Buffer para puntos intermedios
+        self.buffer_puntos: List[Tuple[int, int]] = []
+        self.max_buffer_puntos = 5
 
         logger.info(f"Lienzo inicializado con dimensiones {ancho}x{alto}")
 
@@ -56,6 +69,7 @@ class Lienzo:
         Limpia el lienzo, restaurándolo a su color de fondo original.
         """
         self.lienzo[:] = self.color_fondo
+        self.mascara_dibujo[:] = 0  # Limpiar también la máscara
         logger.info("Lienzo limpiado")
 
     def dibujar_punto(self,
@@ -77,6 +91,14 @@ class Lienzo:
         grosor_usado = grosor if grosor is not None else self.grosor_dibujo
 
         cv2.circle(self.lienzo, punto, grosor_usado // 2, color_usado, -1)
+        # Marcar los píxeles dibujados en la máscara
+        cv2.circle(self.mascara_dibujo, punto, grosor_usado // 2, 255, -1)
+
+        # Actualizar último punto
+        self.ultimo_punto = punto
+
+        # Añadir al buffer de puntos
+        self._actualizar_buffer_puntos(punto)
 
     def dibujar_linea(self,
                      punto_inicio: Tuple[int, int],
@@ -98,7 +120,69 @@ class Lienzo:
         color_usado = color if color is not None else self.color_dibujo
         grosor_usado = grosor if grosor is not None else self.grosor_dibujo
 
-        cv2.line(self.lienzo, punto_inicio, punto_fin, color_usado, grosor_usado)
+        # Calcular la distancia entre los puntos
+        dx = punto_fin[0] - punto_inicio[0]
+        dy = punto_fin[1] - punto_inicio[1]
+        distancia = int(np.sqrt(dx*dx + dy*dy))
+
+        # Si la distancia es grande, interpolar puntos para evitar espacios en trazos rápidos
+        if distancia > 2 * grosor_usado:
+            # Interpolar puntos para movimientos rápidos
+            puntos_interpolados = self._interpolar_puntos(punto_inicio, punto_fin, distancia // grosor_usado)
+
+            # Dibujar líneas entre todos los puntos interpolados
+            punto_anterior = punto_inicio
+            for punto in puntos_interpolados:
+                cv2.line(self.lienzo, punto_anterior, punto, color_usado, grosor_usado)
+                cv2.line(self.mascara_dibujo, punto_anterior, punto, 255, grosor_usado)
+                punto_anterior = punto
+        else:
+            # Para distancias cortas, dibujar una línea directa
+            cv2.line(self.lienzo, punto_inicio, punto_fin, color_usado, grosor_usado)
+            cv2.line(self.mascara_dibujo, punto_inicio, punto_fin, 255, grosor_usado)
+
+        # Actualizar último punto
+        self.ultimo_punto = punto_fin
+
+        # Añadir al buffer de puntos
+        self._actualizar_buffer_puntos(punto_fin)
+
+    def _interpolar_puntos(self,
+                          punto_inicio: Tuple[int, int],
+                          punto_fin: Tuple[int, int],
+                          num_puntos: int) -> List[Tuple[int, int]]:
+        """
+        Interpola puntos entre dos coordenadas para movimientos rápidos.
+
+        Args:
+            punto_inicio: Punto inicial (x, y)
+            punto_fin: Punto final (x, y)
+            num_puntos: Número de puntos a interpolar
+
+        Returns:
+            Lista de puntos intermedios
+        """
+        if num_puntos < 2:
+            return [punto_fin]
+
+        puntos = []
+        for i in range(1, num_puntos + 1):
+            t = i / (num_puntos + 1)
+            x = int(punto_inicio[0] * (1 - t) + punto_fin[0] * t)
+            y = int(punto_inicio[1] * (1 - t) + punto_fin[1] * t)
+            puntos.append((x, y))
+        return puntos
+
+    def _actualizar_buffer_puntos(self, punto: Tuple[int, int]) -> None:
+        """
+        Actualiza el buffer de puntos para suavizado y manejo de trazos rápidos.
+
+        Args:
+            punto: Nuevo punto a añadir al buffer
+        """
+        self.buffer_puntos.append(punto)
+        if len(self.buffer_puntos) > self.max_buffer_puntos:
+            self.buffer_puntos.pop(0)
 
     def cambiar_color(self, color: Tuple[int, int, int]) -> None:
         """
@@ -144,18 +228,20 @@ class Lienzo:
             # Redimensionar el fotograma para que coincida con el lienzo
             fotograma = cv2.resize(fotograma, (self.ancho, self.alto))
 
-        # Crear una máscara para identificar los píxeles dibujados en el lienzo
-        mascara = cv2.inRange(self.lienzo, self.color_fondo, self.color_fondo)
-        mascara = cv2.bitwise_not(mascara)
+        # Usar la máscara de dibujo
+        # Optimización: reutilizar el buffer preasignado para evitar nuevas asignaciones
+        np.copyto(self._frame_resultado, fotograma)
 
-        # Combinar el fotograma y el lienzo usando la máscara
-        fotograma_resultado = fotograma.copy()
+        # Usar operaciones vectorizadas para mayor velocidad
+        idx = self.mascara_dibujo > 0
+        if np.any(idx):
+            # Mezclar solo los píxeles dibujados
+            self._frame_resultado[idx] = (
+                fotograma[idx] * (1 - alpha) +
+                self.lienzo[idx] * alpha
+            ).astype(np.uint8)
 
-        # Para los píxeles donde la máscara es no cero (píxeles dibujados)
-        idx = (mascara > 0)
-        fotograma_resultado[idx] = cv2.addWeighted(fotograma, 1-alpha, self.lienzo, alpha, 0)[idx]
-
-        return fotograma_resultado
+        return self._frame_resultado
 
     def _es_punto_valido(self, punto: Tuple[int, int]) -> bool:
         """

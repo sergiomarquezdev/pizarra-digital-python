@@ -7,7 +7,7 @@ capturar fotogramas y gestionar los recursos de la cámara.
 import logging
 import cv2
 import numpy as np
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 
 from ..config import CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT
 
@@ -49,6 +49,11 @@ def inicializar_camara() -> cv2.VideoCapture:
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
+                # Optimizaciones para mejorar el rendimiento
+                cap.set(cv2.CAP_PROP_FPS, 30)  # Limitar a 30 FPS para un rendimiento más estable
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reducir el buffer para obtener frames más recientes
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # MJPG suele ser más rápido que YUY2
+
                 # Leer un fotograma de prueba para asegurarse de que funciona
                 ret, _ = cap.read()
                 if not ret:
@@ -74,18 +79,25 @@ def inicializar_camara() -> cv2.VideoCapture:
     logger.error("No se pudo abrir ninguna cámara disponible")
     raise CameraError("No se pudo abrir ninguna cámara disponible. Verifica que tu cámara esté conectada y no esté siendo utilizada por otra aplicación.")
 
-def leer_fotograma(cap: cv2.VideoCapture) -> Tuple[bool, Optional[np.ndarray]]:
+def leer_fotograma(cap: cv2.VideoCapture, escala: float = 1.0) -> Tuple[bool, Optional[np.ndarray]]:
     """
-    Lee un fotograma de la cámara.
+    Lee un fotograma de la cámara con opciones de optimización.
 
     Args:
         cap: Objeto de captura de video de OpenCV.
+        escala: Factor de escala para redimensionar el fotograma (1.0 = tamaño original,
+                0.5 = mitad del tamaño). Valores menores mejoran el rendimiento.
 
     Returns:
         Tupla que contiene un booleano indicando si la lectura fue exitosa
         y el fotograma capturado (None si la lectura falló).
     """
     try:
+        # Si hay fotogramas en buffer, descartar todos menos el último
+        if cap.get(cv2.CAP_PROP_BUFFERSIZE) > 1:
+            for _ in range(int(cap.get(cv2.CAP_PROP_BUFFERSIZE)) - 1):
+                cap.grab()
+
         ret, frame = cap.read()
         if not ret:
             logger.warning("No se pudo leer el fotograma de la cámara")
@@ -94,6 +106,13 @@ def leer_fotograma(cap: cv2.VideoCapture) -> Tuple[bool, Optional[np.ndarray]]:
         # Voltear el fotograma horizontalmente para una experiencia tipo espejo
         frame = cv2.flip(frame, 1)
 
+        # Redimensionar si se solicita una escala diferente a 1.0
+        if escala != 1.0:
+            ancho = int(frame.shape[1] * escala)
+            alto = int(frame.shape[0] * escala)
+            # Usar INTER_AREA para reducción (más rápido y mejor calidad para downscaling)
+            frame = cv2.resize(frame, (ancho, alto), interpolation=cv2.INTER_AREA)
+
         return True, frame
     except cv2.error as e:
         logger.error(f"Error de OpenCV al leer fotograma: {e}")
@@ -101,6 +120,46 @@ def leer_fotograma(cap: cv2.VideoCapture) -> Tuple[bool, Optional[np.ndarray]]:
     except Exception as e:
         logger.error(f"Error inesperado al leer fotograma: {e}")
         return False, None
+
+def ajustar_parametros_camara(cap: cv2.VideoCapture, parametros: Dict[str, Any]) -> bool:
+    """
+    Ajusta los parámetros de la cámara para optimizar el rendimiento.
+
+    Args:
+        cap: Objeto de captura de video de OpenCV.
+        parametros: Diccionario con los parámetros a configurar.
+                   Claves válidas: 'fps', 'exposicion', 'brillo', 'contraste', 'saturation'.
+
+    Returns:
+        Booleano indicando si al menos un parámetro se configuró con éxito.
+    """
+    if not cap.isOpened():
+        logger.error("No se puede ajustar parámetros: la cámara no está abierta")
+        return False
+
+    exito = False
+
+    # Mapa de nombres de parámetros a propiedades de OpenCV
+    param_map = {
+        'fps': cv2.CAP_PROP_FPS,
+        'exposicion': cv2.CAP_PROP_EXPOSURE,
+        'brillo': cv2.CAP_PROP_BRIGHTNESS,
+        'contraste': cv2.CAP_PROP_CONTRAST,
+        'saturation': cv2.CAP_PROP_SATURATION,
+        'buffer': cv2.CAP_PROP_BUFFERSIZE
+    }
+
+    for nombre, valor in parametros.items():
+        if nombre in param_map:
+            prop = param_map[nombre]
+            result = cap.set(prop, valor)
+            if result:
+                logger.info(f"Parámetro '{nombre}' configurado a {valor}")
+                exito = True
+            else:
+                logger.warning(f"No se pudo configurar el parámetro '{nombre}'")
+
+    return exito
 
 def liberar_camara(cap: cv2.VideoCapture) -> None:
     """
