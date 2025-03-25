@@ -129,11 +129,11 @@ def dibujar_footer_metricas(frame: np.ndarray,
                           solo_mano_derecha: bool = False,
                           solo_mano_izquierda: bool = False) -> np.ndarray:
     """
-    Dibuja un footer en la parte inferior de la pantalla con las métricas.
+    Dibuja un footer simplificado en la parte inferior de la pantalla con FPS y estado de dibujo.
 
     Args:
         frame: Frame donde dibujar el footer
-        metricas: Diccionario con métricas a mostrar
+        metricas: Diccionario con métricas a mostrar (no se usa en la versión simplificada)
         fps: Frames por segundo actuales
         estado_dibujo: Estado del dibujo ("ACTIVADO"/"DESACTIVADO")
         dibujo_habilitado: Si el dibujo está habilitado
@@ -162,24 +162,7 @@ def dibujar_footer_metricas(frame: np.ndarray,
     alpha = 0.7
     cv2.addWeighted(overlay, alpha, result, 1 - alpha, 0, result)  # type: ignore
 
-    # Preparar texto para el footer
-    texto_footer = f"FPS: {int(fps)} | "
-
-    # Añadir estado del dibujo
-    color_estado = (0, 255, 0) if dibujo_habilitado else (0, 0, 255)
-
-    # Añadir información relevante
-    if metricas:
-        # Seleccionar métricas importantes a mostrar
-        tiempo_deteccion = metricas.get("Tiempo deteccion (ms)", 0)
-        vel_movimiento = metricas.get("Vel. movimiento", 0)
-
-        texto_footer += f"Detección: {tiempo_deteccion:.1f}ms | Velocidad: {vel_movimiento:.1f} | "
-
-    # Añadir texto sobre gesto de pinza al final
-    texto_footer += "Pinza (pulgar+índice): activar/desactivar dibujo"
-
-    # Mostrar qué mano se está detectando
+    # Determinar qué mano se está detectando
     if solo_mano_derecha:
         texto_mano = "MANO DERECHA"
     elif solo_mano_izquierda:
@@ -187,9 +170,18 @@ def dibujar_footer_metricas(frame: np.ndarray,
     else:
         texto_mano = "AMBAS MANOS"
 
-    # Mostrar texto del footer
+    # Configurar color según el estado del dibujo
+    color_estado = (0, 255, 0) if dibujo_habilitado else (0, 0, 255)
+
+    # Texto simplificado: solo FPS a la izquierda
+    texto_fps = f"FPS: {int(fps)}"
+
+    # Texto sobre el gesto de pinza y estado del dibujo en el centro
+    texto_gesto = "Gesto de pinza: activar/desactivar dibujo"
+
+    # Dibujar texto de FPS a la izquierda
     cv2.putText(result,  # type: ignore
-               texto_footer,
+               texto_fps,
                (10, y_footer + altura_footer - 7),
                cv2.FONT_HERSHEY_SIMPLEX,  # type: ignore
                0.5,
@@ -197,13 +189,25 @@ def dibujar_footer_metricas(frame: np.ndarray,
                1,
                cv2.LINE_AA)  # type: ignore
 
-    # Mostrar estado de dibujo y mano detectada en el lado derecho
+    # Dibujar texto de estado en el centro
+    ancho_texto_estado, _ = cv2.getTextSize(estado_dibujo, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)  # type: ignore
+    x_centro = (frame.shape[1] - ancho_texto_estado) // 2
     cv2.putText(result,  # type: ignore
-               f"{estado_dibujo} | {texto_mano}",
-               (frame.shape[1] - 300, y_footer + altura_footer - 7),
+               estado_dibujo,
+               (x_centro, y_footer + altura_footer - 7),
                cv2.FONT_HERSHEY_SIMPLEX,  # type: ignore
                0.5,
                color_estado,
+               1,
+               cv2.LINE_AA)  # type: ignore
+
+    # Dibujar texto de gesto de pinza y la mano detectada a la derecha
+    cv2.putText(result,  # type: ignore
+               f"Pinza: {texto_mano}",
+               (frame.shape[1] - 200, y_footer + altura_footer - 7),
+               cv2.FONT_HERSHEY_SIMPLEX,  # type: ignore
+               0.5,
+               (200, 200, 200),
                1,
                cv2.LINE_AA)  # type: ignore
 
