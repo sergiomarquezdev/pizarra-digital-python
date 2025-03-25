@@ -9,12 +9,17 @@ Una aplicación Python que permite dibujar en una pizarra digital utilizando ges
 
 ## 📋 Características
 
-- **Dibujo Intuitivo:** Usa tu dedo índice como lápiz digital
-- **Paleta de Colores:** Incluye cinco colores predefinidos (blanco, negro, azul, rojo, verde)
+- **Dibujo Intuitivo:** Usa tu dedo índice como lápiz digital para dibujar sobre un lienzo virtual
+- **Gesto de Pinza:** Activa/desactiva el modo de dibujo juntando el pulgar y el índice
+- **Paleta de Colores:** Incluye múltiples colores para dibujar (rojo, verde, azul, amarillo, magenta, cian, negro, blanco)
 - **Borrado Rápido:** Botón para limpiar la pizarra completamente
+- **Modo Espejo:** Visión como en un espejo para una experiencia más natural
+- **Selección de Manos:** Configura la app para detectar la mano derecha, izquierda o ambas
+- **Interpolación Adaptativa:** Líneas suaves incluso en movimientos rápidos
+- **Grosor Adaptativo:** Varía el grosor de las líneas según la velocidad del movimiento
 - **Interfaz Minimalista:** Panel de controles simple e intuitivo
-- **Experiencia Fluida:** Optimizado para rendimiento en tiempo real con visualización de FPS
-- **Detector Robusto:** Seguimiento preciso de la mano con MediaPipe Hands
+- **Métricas en Tiempo Real:** Visualización de FPS y otros datos de rendimiento
+- **Optimizaciones de Rendimiento:** Ajustes automáticos para mantener una experiencia fluida
 
 ## 🖥️ Demostración
 
@@ -62,25 +67,38 @@ _[Imagen de ejemplo del proyecto en funcionamiento - Sugerido añadir una cuando
 
 ## 📝 Uso
 
-### Diagnóstico de Cámara
-
-Antes de ejecutar la aplicación principal, puedes verificar que tu cámara funciona correctamente:
-
-```bash
-python tests/test_camera.py
-```
-
-Este script probará diferentes índices de cámara y te indicará cuál está disponible.
-
 ### Ejecutar la Aplicación
 
 ```bash
 python src/run.py
 ```
 
+Con opciones adicionales:
+```bash
+# Modo de depuración con procesamiento síncrono y solo mano derecha
+python src/run.py --debug --no-async --mano-derecha
+
+# Calidad alta, resolución media y sin métricas
+python src/run.py --quality high --resolution medium --no-metrics
+```
+
+### Opciones de Línea de Comandos
+
+* `--camera ÍNDICE`: Especifica el índice de la cámara a utilizar
+* `--debug`: Activa el modo de depuración con logs detallados
+* `--no-async`: Desactiva la captura asíncrona de video
+* `--no-metrics`: Oculta las métricas de rendimiento en pantalla
+* `--quality {low,medium,high}`: Establece la calidad de procesamiento
+* `--resolution {low,medium,high}`: Establece la resolución de la cámara
+* `--no-mirror`: Desactiva el modo espejo de la cámara
+* `--mano-derecha`: Detecta solo la mano derecha (la del lado derecho)
+* `--mano-izquierda`: Detecta solo la mano izquierda (la del lado izquierdo)
+* `--ambas-manos`: Detecta ambas manos del usuario
+
 ### Controles:
 
 - **Dibujar:** Extiende tu dedo índice frente a la cámara
+- **Activar/Desactivar Dibujo:** Junta tu pulgar e índice en gesto de pinza
 - **Cambiar color:** Haz clic en los botones de colores
 - **Borrar todo:** Haz clic en el botón "Borrar"
 - **Salir:** Presiona 'q' en cualquier momento
@@ -93,14 +111,13 @@ pizarra-digital-python/
 │   ├── pizarra_digital/         # Paquete principal
 │   │   ├── captura/             # Gestión de entrada de cámara
 │   │   ├── deteccion/           # Detección de manos con MediaPipe
-│   │   ├── dibujo/              # Lógica de dibujo basada en gestos
+│   │   ├── dibujo/              # Lógica de dibujo y gestos
 │   │   ├── interfaz/            # Elementos de la interfaz de usuario
 │   │   ├── lienzo/              # Manejo del lienzo de dibujo
 │   │   ├── utils/               # Utilidades varias
 │   │   ├── config.py            # Configuración global
 │   │   └── main.py              # Punto de entrada principal
-│   ├── run.py                   # Script para ejecutar la aplicación
-│   └── test_camera.py           # Herramienta de diagnóstico de cámara
+│   └── run.py                   # Script para ejecutar la aplicación
 ├── tests/                       # Pruebas unitarias
 ├── project_docs/                # Documentación técnica
 ├── requirements.txt             # Dependencias del proyecto
@@ -114,27 +131,43 @@ pizarra-digital-python/
 
 Si la aplicación no detecta tu cámara correctamente:
 
-1. **Verifica los permisos:** Asegúrate de que tu sistema operativo permita el acceso a la cámara para aplicaciones Python.
-2. **Cierra otras aplicaciones:** Otras aplicaciones podrían estar usando la cámara (Zoom, Teams, navegadores).
-3. **Prueba diferentes índices:** Ejecuta `python src/test_camera.py` para identificar el índice correcto.
-4. **Actualiza la configuración:** Modifica `CAMERA_INDEX` en `src/pizarra_digital/config.py` con el índice correcto.
+1. **Intenta varios índices:** Usa `--camera 1`, `--camera 2`, etc. para probar diferentes cámaras
+2. **Verifica los permisos:** Asegúrate de que tu sistema operativo permita el acceso a la cámara
+3. **Cierra otras aplicaciones:** Otras aplicaciones podrían estar usando la cámara (Zoom, Teams, navegadores)
+4. **Ajusta la resolución:** Usa `--resolution low` para diagnosticar problemas
+
+### Problemas de Rendimiento
+
+1. **Reduce la calidad:** Usa `--quality low` para mejorar los FPS
+2. **Desactiva la asyncronía:** Prueba con `--no-async` si experimentas problemas
+3. **Reduce la resolución:** Usa `--resolution low` para mejor rendimiento
+4. **Cierra aplicaciones en segundo plano:** Libera recursos del sistema
 
 ### Problemas de Detección de Manos
 
-1. **Mejora la iluminación:** Asegúrate de que tu mano esté bien iluminada.
-2. **Ajusta la distancia:** Mantén tu mano a una distancia moderada de la cámara (20-50 cm).
-3. **Evita fondos complejos:** Un fondo simple mejora la precisión de la detección.
+1. **Mejora la iluminación:** Asegúrate de que tu mano esté bien iluminada
+2. **Ajusta la distancia:** Mantén tu mano a una distancia moderada de la cámara (20-50 cm)
+3. **Cambia la configuración:** Prueba con `--mano-derecha` o `--mano-izquierda` según corresponda
+4. **Modo espejo:** Prueba con o sin `--no-mirror` para ver qué funciona mejor
 
 ## 🔄 Cambios Recientes
 
-- **Mejora en la detección de cámaras:** Implementada detección automática de cámaras disponibles.
-- **Ajustes en MediaPipe:** Optimizada la configuración para mejorar la precisión de detección.
-- **Nueva herramienta de diagnóstico:** Añadido script para verificar y configurar la cámara.
-- **Correcciones de importación:** Solucionados problemas con las rutas de módulos.
+- **Gesto de pinza:** Implementado para activar/desactivar el dibujo juntando pulgar e índice
+- **Modo espejo:** Añadida opción para ver la cámara en modo espejo para experiencia más natural
+- **Opciones de línea de comandos:** Mejoradas para mayor flexibilidad y control
+- **Optimizaciones de interpolación:** Líneas más suaves durante movimientos rápidos
+- **Mejoras en la detección:** Mayor precisión en la detección de gestos y posición de dedos
+- **Selección de manos:** Soporte para seleccionar qué mano detectar (derecha, izquierda o ambas)
+- **Panel de métricas:** Visualización mejorada de datos de rendimiento en tiempo real
 
 ## 🛣️ Desarrollo Futuro
 
-Ver [project_docs/roadmap.md](project_docs/roadmap.md) para detalles sobre las próximas funcionalidades planificadas.
+- Guardar y cargar dibujos
+- Herramientas adicionales (formas, texto)
+- Reconocimiento de gestos adicionales
+- Modo multijugador para colaboración
+- Exportación a formatos estándar
+- Optimizaciones para dispositivos de bajo rendimiento
 
 ## 📄 Licencia
 
