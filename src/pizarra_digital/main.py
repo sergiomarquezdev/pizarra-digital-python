@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 ESCALA_CAMARA: float = 1.0  # Factor de escala para la cámara (1.0 = tamaño completo)
 MOSTRAR_FPS: bool = True  # Mostrar contador de FPS
 OPTIMIZAR_RENDIMIENTO: bool = True  # Aplicar optimizaciones automáticas
+INTERACCION_TACTIL: bool = True  # Habilitar interacción táctil con los botones
 
 def calcular_fps(tiempo_inicio: float, num_frames: int = 10) -> float:
     """
@@ -235,11 +236,25 @@ def ejecutar_app() -> None:
             frame_procesado, manos_detectadas = detector.procesar_fotograma(frame, dibujar_landmarks=True)
             tiempos_operaciones['detector'] = time.time() - t_inicio
 
+            # Variables para interacción táctil
+            posicion_indice = None
+            indice_extendido = False
+
             # Procesar la primera mano detectada (si hay alguna)
             t_inicio = time.time()
             if manos_detectadas:
-                dibujo.procesar_mano(manos_detectadas[0], detector)
+                # Obtener información para interacción táctil
+                primera_mano = manos_detectadas[0]
+                posicion_indice = detector.obtener_punta_indice(primera_mano)
+                indice_extendido = detector.es_indice_extendido(primera_mano)
+
+                # Procesar la mano para dibujo
+                dibujo.procesar_mano(primera_mano, detector)
             tiempos_operaciones['dibujo'] = time.time() - t_inicio
+
+            # Procesar interacción táctil con la interfaz si está habilitada
+            if INTERACCION_TACTIL:
+                interfaz.procesar_posicion_dedo(posicion_indice, indice_extendido)
 
             # Superponer el lienzo en el fotograma
             t_inicio = time.time()

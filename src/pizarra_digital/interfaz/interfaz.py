@@ -7,6 +7,7 @@ incluyendo botones, visualización y eventos de mouse.
 import logging
 import cv2
 import numpy as np
+import time
 from typing import Tuple, List, Dict, Callable, Optional, Any
 
 from ..config import (
@@ -23,6 +24,10 @@ from ..config import (
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Constantes para la interacción táctil
+TIEMPO_ACTIVACION_BOTON: float = 0.6  # Tiempo en segundos para activar un botón con el dedo
+RADIO_INDICADOR_DEDO: int = 10  # Radio del círculo que muestra dónde está el dedo índice
 
 class Boton:
     """Clase para representar un botón en la interfaz."""
@@ -58,6 +63,11 @@ class Boton:
         self.color_texto = color_texto
         self.accion = accion
         self.activo = False
+
+        # Variables para el gesto de "pulsación"
+        self.tiempo_inicio_hover: Optional[float] = None
+        self.en_hover = False
+        self.progreso_activacion = 0.0  # Progreso de activación (0.0 a 1.0)
 
     def contiene_punto(self, punto: Tuple[int, int]) -> bool:
         """
@@ -96,6 +106,19 @@ class Boton:
                      color_borde,
                      grosor_borde)  # Borde
 
+        # Si el botón está en hover con el dedo, mostrar indicador de progreso
+        if self.en_hover and self.progreso_activacion > 0:
+            # Calcular las dimensiones de la barra de progreso
+            altura_barra = 4
+            ancho_progreso = int(self.ancho * self.progreso_activacion)
+
+            # Dibujar la barra de progreso en la parte inferior del botón
+            cv2.rectangle(frame,
+                         (self.x, self.y + self.alto - altura_barra),
+                         (self.x + ancho_progreso, self.y + self.alto),
+                         (0, 255, 255),  # Color amarillo
+                         -1)  # Rellenar
+
         # Dibujar el texto del botón
         # Calcular la posición del texto para centrarlo en el botón
         (ancho_texto, alto_texto), _ = cv2.getTextSize(
@@ -111,6 +134,43 @@ class Boton:
                    BUTTON_FONT_SCALE,
                    self.color_texto,
                    1)
+
+    def actualizar_estado_hover(self, punto: Optional[Tuple[int, int]]) -> bool:
+        """
+        Actualiza el estado de hover del botón y gestiona el tiempo para la activación.
+
+        Args:
+            punto: Coordenadas (x, y) del punto del dedo, o None si no hay dedo.
+
+        Returns:
+            True si el botón ha sido activado en esta actualización, False en caso contrario.
+        """
+        activado = False
+
+        if punto and self.contiene_punto(punto):
+            # El dedo está sobre el botón
+            if not self.en_hover:
+                # Acaba de empezar el hover
+                self.en_hover = True
+                self.tiempo_inicio_hover = time.time()
+                self.progreso_activacion = 0.0
+            else:
+                # Continúa el hover, actualizar progreso
+                tiempo_actual = time.time()
+                tiempo_transcurrido = tiempo_actual - (self.tiempo_inicio_hover or tiempo_actual)
+                self.progreso_activacion = min(1.0, tiempo_transcurrido / TIEMPO_ACTIVACION_BOTON)
+
+                # Verificar si se cumple el tiempo para activar
+                if self.progreso_activacion >= 1.0:
+                    activado = True
+                    self.tiempo_inicio_hover = None  # Reiniciar el tiempo
+        else:
+            # El dedo no está sobre el botón
+            self.en_hover = False
+            self.tiempo_inicio_hover = None
+            self.progreso_activacion = 0.0
+
+        return activado
 
     def activar(self) -> None:
         """Activa el botón (cambia su apariencia visual)."""
@@ -147,6 +207,10 @@ class InterfazUsuario:
 
         # Eventos de mouse
         self.ultimo_clic: Optional[Tuple[int, int]] = None
+
+        # Variables para interacción táctil
+        self.ultima_pos_dedo: Optional[Tuple[int, int]] = None
+        self.ultimo_tiempo_interaccion = 0.0
 
         logger.info(f"Interfaz de usuario inicializada con dimensiones {ancho_ventana}x{alto_ventana}")
 
@@ -245,6 +309,14 @@ class InterfazUsuario:
         for boton in self.botones:
             boton.dibujar(frame_ui)
 
+        # Dibujar indicador de posición del dedo si está presente
+        if self.ultima_pos_dedo:
+            x, y = self.ultima_pos_dedo
+            cv2.circle(frame_ui, (x, y), RADIO_INDICADOR_DEDO, (0, 255, 255), 2)
+
+            # Agregar un pequeño punto en el centro para mejor precisión
+            cv2.circle(frame_ui, (x, y), 2, (0, 255, 255), -1)
+
         return frame_ui
 
     def procesar_evento_mouse(self, evento: int, x: int, y: int, *args) -> None:
@@ -277,6 +349,47 @@ class InterfazUsuario:
 
                     logger.info(f"Botón '{boton.etiqueta}' seleccionado")
                     return  # Salir después de encontrar un botón
+
+    def procesar_posicion_dedo(self, posicion: Optional[Tuple[int, int]], dibujando: bool) -> None:
+        """
+        Procesa la posición del dedo índice para interacción táctil.
+
+        Args:
+            posicion: Coordenadas (x, y) de la punta del dedo índice, o None si no hay dedo.
+            dibujando: Indica si el dedo está en modo dibujo (extendido).
+        """
+        self.ultima_pos_dedo = posicion
+
+        # Si no hay posición del dedo o está dibujando, reiniciar todos los botones
+        if posicion is None or dibujando:
+            for boton in self.botones:
+                boton.en_hover = False
+                boton.tiempo_inicio_hover = None
+                boton.progreso_activacion = 0.0
+            return
+
+        # Verificar si el dedo está sobre algún botón
+        boton_activado = None
+
+        for boton in self.botones:
+            if boton.actualizar_estado_hover(posicion):
+                boton_activado = boton
+                break
+
+        # Si se ha activado un botón, desactivar el botón anterior y ejecutar la acción
+        if boton_activado:
+            # Desactivar el botón previamente seleccionado
+            if self.boton_seleccionado and self.boton_seleccionado != boton_activado:
+                self.boton_seleccionado.desactivar()
+
+            # Activar el nuevo botón y ejecutar su acción
+            boton_activado.activar()
+            boton_activado.ejecutar_accion()
+
+            # Actualizar el botón seleccionado
+            self.boton_seleccionado = boton_activado
+
+            logger.info(f"Botón '{boton_activado.etiqueta}' seleccionado mediante gesto táctil")
 
     def registrar_eventos_mouse(self, nombre_ventana: str) -> None:
         """
