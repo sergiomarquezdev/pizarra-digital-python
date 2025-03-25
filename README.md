@@ -92,7 +92,7 @@ python src/run.py --quality high --resolution medium --no-metrics
 * `--resolution {low,medium,high}`: Establece la resolución de la cámara
 * `--no-mirror`: Desactiva el modo espejo de la cámara
 * `--mano-derecha`: Detecta solo la mano derecha (la del lado derecho)
-* `--mano-izquierda`: Detecta solo la mano izquierda (la del lado izquierdo)
+* `--mano-izquierda`: Detecta solo la mano izquierda (la del lado izquierdo) - Opción predeterminada
 * `--ambas-manos`: Detecta ambas manos del usuario
 
 ### Controles:
@@ -152,6 +152,7 @@ Si la aplicación no detecta tu cámara correctamente:
 
 ## 🔄 Cambios Recientes
 
+- **Mano predeterminada:** Cambiada a mano izquierda para mayor comodidad para la mayoría de usuarios
 - **Gesto de pinza:** Implementado para activar/desactivar el dibujo juntando pulgar e índice
 - **Modo espejo:** Añadida opción para ver la cámara en modo espejo para experiencia más natural
 - **Opciones de línea de comandos:** Mejoradas para mayor flexibilidad y control

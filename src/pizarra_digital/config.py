@@ -56,7 +56,7 @@ OPTIMIZATION_SHOW_METRICS: bool = True  # Mostrar métricas de rendimiento
 OPTIMIZATION_QUALITY: float = 0.7  # Factor de calidad (0-1)
 OPTIMIZATION_BUFFER_SIZE: int = 10  # Tamaño del buffer para operaciones de dibujo
 OPTIMIZATION_MEMORY_LIMIT_MB: int = 100  # Límite de memoria en MB para el buffer de operaciones
-OPTIMIZATION_SOLO_MANO_DERECHA: bool = True  # Solo detectar la mano derecha
+OPTIMIZATION_SOLO_MANO_DERECHA: bool = False  # Por defecto no detectar la mano derecha
 
 # Configuración de la interfaz de usuario
 UI_BUTTON_SIZE: int = 40  # Aumentado para mayor resolución

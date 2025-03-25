@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     grupo_mano.add_argument(
         "--mano-izquierda",
         action="store_true",
-        help="Detectar la mano izquierda del usuario (la que está en tu lado izquierdo)"
+        help="Detectar la mano izquierda del usuario (la que está en tu lado izquierdo) - Opción predeterminada"
     )
     grupo_mano.add_argument(
         "--ambas-manos",
@@ -132,8 +132,9 @@ def configurar_app(args: argparse.Namespace) -> Dict[str, Any]:
     }
 
     # Configuración de manos
-    solo_mano_derecha = args.mano_derecha or (not args.mano_izquierda and not args.ambas_manos)
-    solo_mano_izquierda = args.mano_izquierda
+    # Por defecto usar mano izquierda, a menos que se especifique mano derecha o ambas manos
+    solo_mano_izquierda = args.mano_izquierda or (not args.mano_derecha and not args.ambas_manos)
+    solo_mano_derecha = args.mano_derecha
 
     # Crear diccionario de configuración
     config = {
