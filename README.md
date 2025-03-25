@@ -67,7 +67,7 @@ _[Imagen de ejemplo del proyecto en funcionamiento - Sugerido añadir una cuando
 Antes de ejecutar la aplicación principal, puedes verificar que tu cámara funciona correctamente:
 
 ```bash
-python src/test_camera.py
+python tests/test_camera.py
 ```
 
 Este script probará diferentes índices de cámara y te indicará cuál está disponible.
