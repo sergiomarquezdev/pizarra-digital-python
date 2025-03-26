@@ -127,7 +127,8 @@ def dibujar_footer_metricas(frame: np.ndarray,
                           estado_dibujo: str,
                           dibujo_habilitado: bool,
                           solo_mano_derecha: bool = False,
-                          solo_mano_izquierda: bool = False) -> np.ndarray:
+                          solo_mano_izquierda: bool = False,
+                          info_gesto: str = "") -> np.ndarray:
     """
     Dibuja un footer simplificado en la parte inferior de la pantalla con FPS y estado de dibujo.
 
@@ -139,6 +140,7 @@ def dibujar_footer_metricas(frame: np.ndarray,
         dibujo_habilitado: Si el dibujo está habilitado
         solo_mano_derecha: Si es True, solo se detecta la mano derecha
         solo_mano_izquierda: Si es True, solo se detecta la mano izquierda
+        info_gesto: Información sobre el gesto de pinza
 
     Returns:
         Frame con el footer de métricas dibujado
@@ -176,8 +178,8 @@ def dibujar_footer_metricas(frame: np.ndarray,
     # Texto simplificado: solo FPS a la izquierda
     texto_fps = f"FPS: {int(fps)}"
 
-    # Texto sobre el gesto de pinza y estado del dibujo en el centro
-    texto_gesto = "Gesto de pinza: activar/desactivar dibujo"
+    # Texto sobre el gesto para activar/desactivar el dibujo
+    texto_gesto = info_gesto
 
     # Dibujar texto de FPS a la izquierda
     cv2.putText(result,  # type: ignore
@@ -190,8 +192,9 @@ def dibujar_footer_metricas(frame: np.ndarray,
                cv2.LINE_AA)  # type: ignore
 
     # Dibujar texto de estado en el centro
-    ancho_texto_estado, _ = cv2.getTextSize(estado_dibujo, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)  # type: ignore
-    x_centro = (frame.shape[1] - ancho_texto_estado) // 2
+    tamaño_texto, _ = cv2.getTextSize(estado_dibujo, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)  # type: ignore
+    ancho_texto = tamaño_texto[0]  # El primer elemento de la tupla es el ancho
+    x_centro = (frame.shape[1] - ancho_texto) // 2
     cv2.putText(result,  # type: ignore
                estado_dibujo,
                (x_centro, y_footer + altura_footer - 7),
@@ -201,10 +204,10 @@ def dibujar_footer_metricas(frame: np.ndarray,
                1,
                cv2.LINE_AA)  # type: ignore
 
-    # Dibujar texto de gesto de pinza y la mano detectada a la derecha
+    # Dibujar texto sobre la mano detectada a la derecha
     cv2.putText(result,  # type: ignore
-               f"Pinza: {texto_mano}",
-               (frame.shape[1] - 200, y_footer + altura_footer - 7),
+               texto_mano,
+               (frame.shape[1] - 140, y_footer + altura_footer - 7),
                cv2.FONT_HERSHEY_SIMPLEX,  # type: ignore
                0.5,
                (200, 200, 200),
@@ -388,21 +391,25 @@ def ejecutar_app(componentes: Dict[str, Any]) -> None:
                 # Obtener si se está haciendo gesto de pinza
                 gesto_pinza = detector.es_gesto_pinza(mano) if mano else False
 
+                # Obtener si el dedo meñique está extendido
+                menique_extendido = detector.es_menique_extendido(mano) if mano else False
+
                 # Loguear resultados para debug
                 if mano:
                     logger.debug(f"DEPURACIÓN - Mano detectada: punta_indice={punta_indice}, "
-                               f"extendido={indice_extendido}, gesto_pinza={gesto_pinza}")
+                               f"extendido={indice_extendido}, gesto_pinza={gesto_pinza}, "
+                               f"meñique_extendido={menique_extendido}")
                 else:
                     logger.debug("DEPURACIÓN - No se detectaron manos")
 
-                # Verificar si hay cambio en el gesto de pinza para toggle de dibujo
-                if mano and gesto_pinza:
+                # Verificar si hay cambio en el gesto del meñique para toggle de dibujo
+                if mano and menique_extendido:
                     # Almacenar estado de gestos recientes para estabilidad
                     gestos_pinza.append(True)
                     if len(gestos_pinza) > 3:  # Mantener solo los últimos 3
                         gestos_pinza.pop(0)
 
-                    # Activar toggle solo si llevamos 3 frames seguidos con gesto de pinza
+                    # Activar toggle solo si llevamos 3 frames seguidos con gesto de meñique extendido
                     if len(gestos_pinza) == 3 and all(gestos_pinza) and time.time() - ultimo_toggle > 1.0:
                         # Toggle del estado de dibujo (activado/desactivado)
                         controlador_dibujo.toggle_dibujo_habilitado()
@@ -412,7 +419,7 @@ def ejecutar_app(componentes: Dict[str, Any]) -> None:
                         nuevo_estado = "ACTIVADO" if controlador_dibujo.es_dibujo_habilitado() else "DESACTIVADO"
                         logger.info(f"Estado de dibujo cambiado a: {nuevo_estado}")
                 else:
-                    # Reiniciar contador de gestos si no hay gesto de pinza
+                    # Reiniciar contador de gestos si no hay gesto de meñique extendido
                     gestos_pinza.clear()
 
                 # Procesar el dibujo si está habilitado
@@ -476,6 +483,7 @@ def ejecutar_app(componentes: Dict[str, Any]) -> None:
 
             # Estado del dibujo
             estado_dibujo = "DIBUJO ACTIVADO" if controlador_dibujo.es_dibujo_habilitado() else "DIBUJO DESACTIVADO"
+            info_gesto = "Levanta dedo meñique para activar/desactivar dibujo"
 
             # Recolectar métricas para el footer
             metricas_footer = None
@@ -505,7 +513,8 @@ def ejecutar_app(componentes: Dict[str, Any]) -> None:
                 estado_dibujo,
                 controlador_dibujo.es_dibujo_habilitado(),
                 solo_mano_derecha=solo_mano_derecha,
-                solo_mano_izquierda=solo_mano_izquierda
+                solo_mano_izquierda=solo_mano_izquierda,
+                info_gesto=info_gesto
             )
 
             # Mostrar frame final

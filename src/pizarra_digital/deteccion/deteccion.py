@@ -41,6 +41,7 @@ INDEX_FINGER_TIP: int = 8
 THUMB_TIP: int = 4  # Índice de la punta del pulgar
 PINCH_DISTANCE_THRESHOLD: float = 0.05  # Umbral relativo al tamaño de la mano
 MIN_PINCH_DISTANCE_PX: int = 10  # Distancia mínima en píxeles para el gesto de pinza
+PINKY_FINGER_TIP: int = 20  # Índice de la punta del dedo meñique
 
 class DetectorManos:
     """
@@ -537,6 +538,66 @@ class DetectorManos:
 
         except (AttributeError, IndexError) as e:
             logger.debug(f"Error al determinar si el índice está extendido: {e}")
+            return False
+
+    def es_menique_extendido(self, mano) -> bool:
+        """
+        Determina si el dedo meñique está extendido.
+
+        Args:
+            mano: Objeto NormalizedLandmarkList de MediaPipe con los landmarks de la mano.
+
+        Returns:
+            True si el dedo meñique está extendido, False en caso contrario.
+        """
+        try:
+            if mano is None or not hasattr(mano, 'landmark'):
+                return False
+
+            # Verificar si tenemos suficientes landmarks
+            if len(mano.landmark) < 21:  # Necesitamos hasta el punto 20 (punta del meñique)
+                logger.debug("DEBUG-DEDO: No hay suficientes landmarks para determinar estado del meñique")
+                return False
+
+            # Obtener puntos clave normalizados
+            punta_menique = mano.landmark[20]  # Punta del dedo meñique
+            medio_menique = mano.landmark[19]  # Articulación media del dedo meñique
+            base_menique = mano.landmark[17]   # Base del dedo meñique
+
+            # DEBUG: Registrar coordenadas
+            logger.debug(f"DEBUG-MENIQUE: Punta meñique (20): ({punta_menique.x:.4f}, {punta_menique.y:.4f})")
+            logger.debug(f"DEBUG-MENIQUE: Medio meñique (19): ({medio_menique.x:.4f}, {medio_menique.y:.4f})")
+            logger.debug(f"DEBUG-MENIQUE: Base meñique (17): ({base_menique.x:.4f}, {base_menique.y:.4f})")
+
+            # Calcular si el dedo está extendido
+            # Criterio: El dedo está extendido si la punta está más arriba (y menor) que la base
+            esta_extendido = punta_menique.y < base_menique.y
+
+            # MEJORA: Añadir criterio adicional - distancia vertical significativa
+            distancia_y = abs(punta_menique.y - base_menique.y)
+            umbral_distancia = 0.1  # Coordenadas normalizadas (0-1)
+
+            distancia_suficiente = distancia_y > umbral_distancia
+
+            # Verificación adicional: Los otros dedos (índice, medio, anular) no deben estar extendidos
+            # Esto hace el gesto más específico y reduce falsos positivos
+            indice_retraido = mano.landmark[8].y > mano.landmark[5].y  # Punta índice más baja que base
+            medio_retraido = mano.landmark[12].y > mano.landmark[9].y  # Punta medio más baja que base
+            anular_retraido = mano.landmark[16].y > mano.landmark[13].y  # Punta anular más baja que base
+
+            gesto_especifico = indice_retraido and medio_retraido and anular_retraido
+
+            # DEBUG: Registrar cálculos y resultado
+            logger.debug(f"DEBUG-MENIQUE: Criterio y: {punta_menique.y:.4f} < {base_menique.y:.4f} = {punta_menique.y < base_menique.y}")
+            logger.debug(f"DEBUG-MENIQUE: Distancia Y: {distancia_y:.4f}, Umbral: {umbral_distancia:.4f}, Suficiente: {distancia_suficiente}")
+            logger.debug(f"DEBUG-MENIQUE: Otros dedos retraídos: {gesto_especifico}")
+            logger.debug(f"DEBUG-MENIQUE: Resultado final: {esta_extendido and distancia_suficiente and gesto_especifico}")
+
+            # Devolver el resultado considerando todos los criterios
+            return esta_extendido and distancia_suficiente and gesto_especifico
+
+        except (AttributeError, IndexError) as e:
+            logger.debug(f"Error al determinar si el meñique está extendido: {e}")
             return False
 
     def es_gesto_pinza(self, mano) -> bool:
